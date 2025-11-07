@@ -1,0 +1,62 @@
+# Ambiente virtual
+venv/
+env/
+ENV/
+.venv/
+
+# Variáveis de ambiente e configurações sensíveis
+.env
+.env.local
+.env.*.local
+config.local.py
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+*.manifest
+*.spec
+pip-log.txt
+pip-delete-this-directory.txt
+.kiro
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# Arquivos de mídia e downloads
+media/*
+!media/.gitkeep
+*.pdf
+*.zip
+
+# Logs
+*.log
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Arquivos temporários
+*.tmp
+*.bak
+*.cache
