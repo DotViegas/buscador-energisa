@@ -15,7 +15,7 @@ def obter_codigo_email():
         mail.select("inbox")
         
         # Buscar emails com o assunto específico
-        _, messages = mail.search(None, 'SUBJECT "[SMSForwarder] New message from 28115"')
+        _, messages = mail.search(None, 'SUBJECT "BuscaSMSEnergisa - SMS do 28115 (Energisa)"')
         
         if not messages[0]:
             return None
@@ -37,7 +37,8 @@ def obter_codigo_email():
         for part in email_message.walk():
             if part.get_content_type() == "text/plain":
                 body = part.get_payload(decode=True).decode()
-                match = re.search(r'Codigo de seguranca: (\d+)', body)
+                # Padrão flexível para capturar o código (com ou sem acento, com ou sem "Energisa -")
+                match = re.search(r'C[oó]digo de seguran[cç]a:\s*(\d+)', body, re.IGNORECASE)
                 if match:
                     codigo = match.group(1)
                     print(f"Código encontrado: {codigo}")
