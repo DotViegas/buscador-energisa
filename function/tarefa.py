@@ -197,6 +197,17 @@ def processar_faturas_do_json(json_data, page):
                         "sucesso": resultado
                     })
                 
+                elif tarefa == "fatura_agendado":
+                    # Processar fatura agendada - verificar se foi paga
+                    resultado = executar_fatura_agendada(nova_uc, mes_referencia, page, fatura_id, fatura, eh_primeira_fatura)
+                    resultados.append({
+                        "id": fatura_id,
+                        "uc": nova_uc,
+                        "mes": mes_referencia,
+                        "tarefa": tarefa,
+                        "sucesso": resultado
+                    })
+                
                 else:
                     print(f"⚠️ Tarefa desconhecida: {tarefa}")
                 
@@ -592,4 +603,132 @@ def executar_fatura_vencida(nova_uc, mes_referencia, page, fatura_id, fatura_exi
             
     except Exception as e:
         print(f"❌ Erro durante processamento da fatura vencida: {str(e)}")
+        return False
+
+
+def executar_fatura_agendada(nova_uc, mes_referencia, page, fatura_id, fatura_existente=None, primeira_fatura=False):
+    """
+    Executa o processamento de fatura agendada
+    APENAS atualiza a situação de pagamento - SEM fazer download de boleto
+    
+    Args:
+        nova_uc (str): UC no formato "10/xxxxxxx-1x"
+        mes_referencia (str): Mês de referência no formato "MM/AAAA"
+        page: Instância da página do Playwright
+        fatura_id (int): ID da fatura do JSON
+        fatura_existente (dict): Dados da fatura existente para comparação (opcional)
+        primeira_fatura (bool): Se é a primeira fatura da geradora
+    """
+    try:
+        print(f"Iniciando processamento de fatura agendada para UC: {nova_uc}, Mês: {mes_referencia}")
+        print("⚠️ Modo AGENDADO: Apenas verificação de situação de pagamento - SEM download de boleto")
+        
+        # 1. Buscar o mês de referência da nova_uc processada no formato MM/AAAA
+        mes_busca = mes_referencia
+        print(f"Buscando fatura para o mês: {mes_busca}")
+        
+        # 2. Listar todos os cards da página usando o seletor preciso "card-billing__date"
+        cards_date = page.locator('.card-billing__date')
+        cards_count = cards_date.count()
+        print(f"Encontrados {cards_count} cards de fatura na página")
+        
+        fatura_encontrada = False
+        situacao_pagamento = None
+        
+        # 3. Verificar se existe o card referente ao mês buscado
+        for i in range(cards_count):
+            card_date = cards_date.nth(i)
+            
+            # Extrair mês e ano do card
+            mes_element = card_date.locator('p').first
+            ano_element = card_date.locator('p').last
+            
+            mes_texto = mes_element.text_content().strip()
+            ano_texto = ano_element.text_content().strip()
+            
+            # Converter mês para número
+            meses = {
+                'Janeiro': '01', 'Fevereiro': '02', 'Março': '03', 'Abril': '04',
+                'Maio': '05', 'Junho': '06', 'Julho': '07', 'Agosto': '08',
+                'Setembro': '09', 'Outubro': '10', 'Novembro': '11', 'Dezembro': '12'
+            }
+            
+            mes_numero = meses.get(mes_texto, '00')
+            mes_card = f"{mes_numero}/{ano_texto}"
+            
+            print(f"Card {i+1}: {mes_texto} {ano_texto} ({mes_card})")
+            
+            # Verificar se é o mês que estamos buscando
+            if mes_card == mes_busca:
+                print(f"✓ Fatura encontrada para {mes_texto} {ano_texto}")
+                fatura_encontrada = True
+                
+                # Buscar o card completo que contém todas as informações
+                card_completo = card_date.locator('xpath=ancestor::*[contains(@class, "card-billing") or contains(@class, "card")]').first
+                
+                # Verificar situação de pagamento baseada na classe CSS do card-billing__top
+                situacao_element = card_completo.locator('.card-billing__top')
+                situacao_class = situacao_element.get_attribute('class')
+                
+                # Determinar situação de pagamento
+                if 'card-billing__top--green' in situacao_class:
+                    situacao_pagamento = "paga"
+                elif 'card-billing__top--orange' in situacao_class:
+                    situacao_pagamento = "a_vencer"
+                elif 'card-billing__top--red' in situacao_class:
+                    situacao_pagamento = "vencida"
+                else:
+                    situacao_pagamento = "desconhecida"
+                
+                print(f"Situação de pagamento detectada: {situacao_pagamento}")
+                break
+        
+        if not fatura_encontrada:
+            print(f"❌ Fatura não encontrada para o mês {mes_busca}")
+            return False
+        
+        # 4. Lógica específica para fatura agendada - APENAS atualização de situação
+        # Se a fatura foi paga, atualizar para "paga"
+        # Se ainda está a_vencer ou vencida, manter como "agendado"
+        
+        if debug_mode:
+            url = API_ATUALIZAR_FATURA_DEV
+        else:
+            url = API_ATUALIZAR_FATURA_PROD
+        
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {GEUS_APIKEY}"
+        }
+        
+        if situacao_pagamento == "paga":
+            print("💳 Fatura agendada foi PAGA - atualizando situação para 'paga'")
+            
+            body = {
+                "id": fatura_id,
+                "situacao_pagamento": "paga"
+            }
+            
+            print(f"Enviando atualização de situação para 'paga' via API: {url}")
+            response = requests.post(url, headers=headers, json=body)
+            
+            if response.status_code == 200:
+                print("✅ Fatura atualizada para 'paga' com sucesso")
+                return True
+            else:
+                print(f"❌ Erro ao enviar para API: {response.status_code}")
+                print(f"Resposta: {response.text}")
+                return False
+        
+        elif situacao_pagamento in ["a_vencer", "vencida"]:
+            print(f"📅 Fatura ainda está como '{situacao_pagamento}' - mantendo como 'agendado'")
+            print("✓ Nenhuma mudança detectada - não é necessário enviar para API")
+            return True
+        
+        else:
+            print(f"⚠️ Situação de pagamento inesperada: {situacao_pagamento}")
+            return False
+            
+    except Exception as e:
+        print(f"❌ Erro durante processamento da fatura agendada: {str(e)}")
         return False
