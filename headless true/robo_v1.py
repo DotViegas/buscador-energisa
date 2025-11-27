@@ -219,132 +219,82 @@ def processar_geradora(geradora_cnpj):
             print(f"📊 Faturas para processar: {len(faturas_uc)}")
             
             try:
-                # Navegar para seleção de UC com retry robusto
-                tentativas_navegacao = 0
-                max_tentativas_navegacao = 3
-                uc_selecionada = False
+                # Navegar para seleção de UC com retry
+                tentativas = 0
+                max_tentativas = 3
                 
-                while tentativas_navegacao < max_tentativas_navegacao and not uc_selecionada:
+                while tentativas < max_tentativas:
                     try:
-                        tentativas_navegacao += 1
-                        print(f"   🔄 Tentativa {tentativas_navegacao} de seleção da UC...")
-                        
-                        # Navegar para listagem
                         page.goto("https://servicos.energisa.com.br/login/listagem-ucs", wait_until="load", timeout=30000)
-                        
-                        # Aguardar página carregar completamente
-                        page.wait_for_load_state("domcontentloaded")
-                        time.sleep(2)  # Aguardar scripts JS carregarem
-                        
-                        # Aguardar input estar disponível e interativo
-                        input_nome = page.get_by_test_id("input-nome")
-                        input_nome.wait_for(state="visible", timeout=15000)
-                        input_nome.wait_for(state="attached", timeout=5000)
-                        
-                        # Garantir que o campo está pronto para interação
-                        time.sleep(1)
-                        
-                        # Limpar campo antes de preencher
-                        input_nome.click(timeout=10000)
-                        input_nome.fill("")  # Limpar primeiro
-                        time.sleep(0.5)
-                        
-                        # Preencher com a UC
-                        input_nome.fill(nova_uc)
-                        time.sleep(1)
-                        
-                        # Clicar no resultado
-                        page.get_by_role("main").locator("span").click(timeout=10000)
-                        time.sleep(1)
-                        
-                        # Clicar em avançar
-                        page.get_by_role("button", name="AVANÇAR").click(timeout=10000)
-                        
-                        uc_selecionada = True
-                        print(f"   ✅ UC selecionada com sucesso")
-                        
+                        page.wait_for_selector("[data-testid='input-nome']", state="visible", timeout=15000)
+                        break
                     except Exception as e:
-                        print(f"   ⚠️ Tentativa {tentativas_navegacao} falhou: {str(e)}")
-                        
-                        if tentativas_navegacao >= max_tentativas_navegacao:
-                            raise Exception(f"Falha ao selecionar UC {nova_uc} após {max_tentativas_navegacao} tentativas")
-                        
-                        # Aguardar antes de tentar novamente (backoff progressivo)
-                        tempo_espera = tentativas_navegacao * 2
-                        print(f"   ⏳ Aguardando {tempo_espera}s antes de tentar novamente...")
-                        time.sleep(tempo_espera)
+                        tentativas += 1
+                        if tentativas >= max_tentativas:
+                            raise e
+                        print(f"   ⚠️ Tentativa {tentativas} falhou, tentando novamente...")
+                
+                page.get_by_test_id("input-nome").click()
+                page.get_by_test_id("input-nome").fill(nova_uc)
+                page.get_by_role("main").locator("span").click()
+                page.get_by_role("button", name="AVANÇAR").click()
                 
                 # Aguardar navegação com validação rigorosa
                 navegacao_sucesso = False
-                tentativas_validacao = 0
-                max_tentativas_validacao = 3
-                
-                while tentativas_validacao < max_tentativas_validacao and not navegacao_sucesso:
-                    tentativas_validacao += 1
+                try:
+                    page.wait_for_url("**/login/login**", timeout=30000)
+                    navegacao_sucesso = True
+                except:
+                    # Se timeout, verificar se realmente saiu da listagem
+                    current_url = page.url
                     
-                    try:
-                        # Aguardar mudança de URL
-                        page.wait_for_url("**/login/login**", timeout=15000)
-                        navegacao_sucesso = True
-                        print(f"   ✅ Navegação bem-sucedida para UC {nova_uc}")
+                    # Se ainda está na listagem, a troca de UC falhou
+                    if "listagem-ucs" in current_url:
+                        print(f"   ❌ ERRO: Troca de UC falhou - ainda na página de listagem")
+                        print(f"   🔄 Tentando novamente a seleção da UC {nova_uc}...")
                         
-                    except:
-                        # Verificar URL atual
-                        current_url = page.url
-                        print(f"   🔍 URL atual: {current_url}")
+                        # Tentar novamente
+                        page.get_by_test_id("input-nome").click()
+                        page.get_by_test_id("input-nome").clear()
+                        page.get_by_test_id("input-nome").fill(nova_uc)
+                        page.get_by_role("main").locator("span").click()
+                        page.get_by_role("button", name="AVANÇAR").click()
                         
-                        # Se ainda está na listagem, a troca falhou
-                        if "listagem-ucs" in current_url:
-                            print(f"   ⚠️ Ainda na página de listagem (tentativa {tentativas_validacao})")
-                            
-                            if tentativas_validacao >= max_tentativas_validacao:
-                                raise Exception(f"Falha ao sair da listagem após {max_tentativas_validacao} tentativas")
-                            
-                            # Aguardar um pouco mais
-                            time.sleep(3)
-                            
-                        # Se saiu da listagem mas não chegou no /login/login
-                        elif "/login" in current_url or "/home" in current_url or "/faturas" in current_url:
+                        # Aguardar novamente
+                        try:
+                            page.wait_for_url("**/login/login**", timeout=30000)
                             navegacao_sucesso = True
-                            print(f"   ✅ Navegação OK - URL válida: {current_url}")
-                            
-                        else:
-                            # URL inesperada
-                            if tentativas_validacao >= max_tentativas_validacao:
-                                raise Exception(f"URL inesperada após seleção: {current_url}")
-                            
-                            print(f"   ⚠️ URL inesperada, aguardando...")
-                            time.sleep(3)
+                            print(f"   ✅ Troca de UC bem-sucedida na segunda tentativa")
+                        except:
+                            current_url = page.url
+                            if "listagem-ucs" not in current_url:
+                                navegacao_sucesso = True
+                                print(f"   ⚠️ Timeout mas saiu da listagem: {current_url}")
+                            else:
+                                raise Exception(f"Falha ao trocar para UC {nova_uc} após 2 tentativas")
+                    
+                    # Se saiu da listagem mas não chegou no /login/login, pode estar ok
+                    elif "/login" in current_url or "/home" in current_url or "/faturas" in current_url:
+                        navegacao_sucesso = True
+                        print(f"   ⚠️ Timeout na navegação, mas URL atual parece válida: {current_url}")
+                    else:
+                        raise
                 
                 if not navegacao_sucesso:
                     raise Exception(f"Navegação falhou para UC {nova_uc}")
                 
                 # Ir para página de faturas com retry
-                tentativas_faturas = 0
-                max_tentativas_faturas = 3
-                faturas_carregadas = False
-                
-                while tentativas_faturas < max_tentativas_faturas and not faturas_carregadas:
+                tentativas = 0
+                while tentativas < max_tentativas:
                     try:
-                        tentativas_faturas += 1
-                        print(f"   📄 Carregando página de faturas (tentativa {tentativas_faturas})...")
-                        
                         page.goto("https://servicos.energisa.com.br/faturas", wait_until="load", timeout=30000)
                         page.wait_for_load_state("domcontentloaded")
-                        
-                        # Aguardar conteúdo carregar
-                        time.sleep(3)
-                        
-                        faturas_carregadas = True
-                        print(f"   ✅ Página de faturas carregada")
-                        
+                        break
                     except Exception as e:
-                        print(f"   ⚠️ Tentativa {tentativas_faturas} falhou ao carregar faturas: {str(e)}")
-                        
-                        if tentativas_faturas >= max_tentativas_faturas:
-                            raise Exception(f"Falha ao carregar página de faturas após {max_tentativas_faturas} tentativas")
-                        
-                        time.sleep(2)
+                        tentativas += 1
+                        if tentativas >= max_tentativas:
+                            raise e
+                        print(f"   ⚠️ Tentativa {tentativas} falhou ao carregar faturas, tentando novamente...")
 
                 # Verifica se é UC sem faturas
                 if page.locator('text=Bem-vindo à esta nova conta com a Energisa.').count() > 0:
@@ -491,8 +441,8 @@ if __name__ == "__main__":
     processar_todas_geradoras()
     
     # Para processar geradoras específicas:
-    # processar_usinas = [
-    #    USINA_LB_CNPJ
-    # ]
-    # print(f"🚀 Iniciando processamento das usinas {processar_usinas}...")
-    # processar_multiplas_geradoras(processar_usinas)
+    #processar_usinas = [
+    #    USINA_SULINA_CNPJ
+    #]
+    #print(f"🚀 Iniciando processamento das usinas {processar_usinas}...")
+    #processar_multiplas_geradoras(processar_usinas)

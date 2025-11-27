@@ -339,8 +339,8 @@ def executar_fatura_pendente(nova_uc, mes_referencia, page, fatura_id, primeira_
                 break
         
         if not fatura_encontrada:
-            print(f"❌ Fatura não encontrada para o mês {mes_busca}")
-            return False
+            print(f"ℹ️ Fatura não localizada para o mês {mes_busca} - situação normal")
+            return True  # Retorna True pois não é um erro, apenas não foi encontrada
         
         # 4. Enviar requisição para a API
         if debug_mode:
@@ -494,8 +494,8 @@ def executar_fatura_vencida(nova_uc, mes_referencia, page, fatura_id, fatura_exi
                 break
         
         if not fatura_encontrada:
-            print(f"❌ Fatura não encontrada para o mês {mes_busca}")
-            return False
+            print(f"ℹ️ Fatura não localizada para o mês {mes_busca} - situação normal")
+            return True  # Retorna True pois não é um erro, apenas não foi encontrada
         
         # 4. Verificar se houve mudanças além da situação de pagamento
         apenas_situacao_mudou = False
@@ -684,8 +684,8 @@ def executar_fatura_agendada(nova_uc, mes_referencia, page, fatura_id, fatura_ex
                 break
         
         if not fatura_encontrada:
-            print(f"❌ Fatura não encontrada para o mês {mes_busca}")
-            return False
+            print(f"ℹ️ Fatura não localizada para o mês {mes_busca}")
+            return True  # Retorna True pois não é um erro, apenas não foi encontrada
         
         # 4. Lógica específica para fatura agendada - APENAS atualização de situação
         # Se a fatura foi paga, atualizar para "paga"

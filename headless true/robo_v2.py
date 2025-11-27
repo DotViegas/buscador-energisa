@@ -487,12 +487,12 @@ def processar_geradora_especifica(geradora_cnpj):
 
 if __name__ == "__main__":
     # Processar todas as geradoras em loop
-    print("🚀 Iniciando processamento de todas as geradoras...")
-    processar_todas_geradoras()
+    # print("🚀 Iniciando processamento de todas as geradoras...")
+    # processar_todas_geradoras()
     
     # Para processar geradoras específicas:
-    # processar_usinas = [
-    #    USINA_LB_CNPJ
-    # ]
-    # print(f"🚀 Iniciando processamento das usinas {processar_usinas}...")
-    # processar_multiplas_geradoras(processar_usinas)
+    processar_usinas = [
+       USINA_LB_CNPJ
+    ]
+    print(f"🚀 Iniciando processamento das usinas {processar_usinas}...")
+    processar_multiplas_geradoras(processar_usinas)
