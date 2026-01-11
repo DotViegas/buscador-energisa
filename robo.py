@@ -1,6 +1,8 @@
 from playwright.sync_api import sync_playwright
 import time
 import re
+import sys
+from datetime import datetime
 
 from function.codigo_sms import obter_codigo_email, obter_codigo_email_com_reenvio_automatico
 from geradoras import (
@@ -25,6 +27,44 @@ geradoras_cnpjs = [
     USINA_LUZDIVINA_CNPJ,
     USINA_G114_CNPJ
 ]
+
+class LogDuplo:
+    """Classe para duplicar prints no console e em arquivo"""
+    def __init__(self, arquivo_log):
+        self.terminal = sys.stdout
+        self.log = open(arquivo_log, 'w', encoding='utf-8')
+    
+    def write(self, mensagem):
+        self.terminal.write(mensagem)
+        self.log.write(mensagem)
+    
+    def flush(self):
+        self.terminal.flush()
+        self.log.flush()
+    
+    def close(self):
+        self.log.close()
+
+def iniciar_log():
+    """Inicia o sistema de logging com nome baseado em data e hora"""
+    # Criar pasta logs se não existir
+    if not os.path.exists('logs'):
+        os.makedirs('logs')
+    
+    # Gerar nome do arquivo: dia-hora.txt (formato: 11012026-134530.txt)
+    agora = datetime.now()
+    nome_arquivo = agora.strftime("%d%m%Y-%H%M%S.txt")
+    caminho_log = os.path.join('logs', nome_arquivo)
+    
+    # Redirecionar stdout para o sistema de log duplo
+    log_duplo = LogDuplo(caminho_log)
+    sys.stdout = log_duplo
+    
+    print(f"📝 Log iniciado: {caminho_log}")
+    print(f"🕐 Data/Hora: {agora.strftime('%d/%m/%Y %H:%M:%S')}")
+    print("=" * 80)
+    
+    return log_duplo
 
 def carregar_json_geradora(geradora_cnpj):
     """Carrega o JSON correspondente à geradora usando apenas os números do CNPJ"""
@@ -486,13 +526,31 @@ def processar_geradora_especifica(geradora_cnpj):
         return False
 
 if __name__ == "__main__":
-    # Processar todas as geradoras em loop
-    print("🚀 Iniciando processamento de todas as geradoras...")
-    processar_todas_geradoras()
+    # Iniciar sistema de logging
+    log_duplo = iniciar_log()
     
-    # Para processar geradoras específicas:
-    # processar_usinas = [
-    #    USINA_LB_CNPJ
-    # ]
-    # print(f"🚀 Iniciando processamento das usinas {processar_usinas}...")
-    # processar_multiplas_geradoras(processar_usinas)
+    try:
+        # Processar todas as geradoras em loop
+        print("🚀 Iniciando processamento de todas as geradoras...")
+        processar_todas_geradoras()
+        
+        # Para processar geradoras específicas:
+        # processar_usinas = [
+        #    USINA_LB_CNPJ
+        # ]
+        # print(f"🚀 Iniciando processamento das usinas {processar_usinas}...")
+        # processar_multiplas_geradoras(processar_usinas)
+        
+        print("=" * 80)
+        print(f"✅ Execução finalizada com sucesso!")
+        print(f"🕐 Fim: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
+        
+    except Exception as e:
+        print("=" * 80)
+        print(f"❌ Erro durante execução: {str(e)}")
+        print(f"🕐 Fim: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
+    
+    finally:
+        # Fechar arquivo de log
+        log_duplo.close()
+        sys.stdout = log_duplo.terminal
