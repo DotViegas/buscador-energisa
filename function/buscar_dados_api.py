@@ -9,6 +9,23 @@ from geradoras import (
 
 debug_mode = DEBUG_MODE
 
+def extrair_numero_fatura(nova_uc):
+    """Extrai o número da fatura removendo tudo antes de '/' e depois de '-'
+    Exemplo: 10/3622059-8 => 3622059
+    """
+    if not nova_uc:
+        return nova_uc
+    
+    # Remove tudo antes do "/" (inclusive o "/")
+    if "/" in nova_uc:
+        nova_uc = nova_uc.split("/", 1)[1]
+    
+    # Remove tudo depois do "-" (inclusive o "-")
+    if "-" in nova_uc:
+        nova_uc = nova_uc.split("-", 1)[0]
+    
+    return nova_uc.strip()
+
 def mapear_situacao_para_tarefa(situacao_pagamento):
     """Mapeia a situação de pagamento para o nome da tarefa"""
     mapeamento = {
@@ -25,16 +42,19 @@ def organizar_faturas_por_geradora(faturas):
     
     for fatura in faturas:
         cnpj_geradora = fatura.get("cnpj_geradora")
-        nova_uc = fatura.get("nova_uc")
+        nova_uc_original = fatura.get("nova_uc")
         situacao_pagamento = fatura.get("situacao_pagamento")
         
         # Pular faturas sem dados essenciais
-        if not cnpj_geradora or not nova_uc or not situacao_pagamento:
+        if not cnpj_geradora or not nova_uc_original or not situacao_pagamento:
             continue
             
         # Filtrar apenas as situações que nos interessam
         if situacao_pagamento not in ["pendente", "a_vencer", "vencida", "agendado"]:
             continue
+        
+        # Extrair apenas o número da fatura (ex: 10/3622059-8 => 3622059)
+        nova_uc = extrair_numero_fatura(nova_uc_original)
         
         # Inicializar estrutura da geradora se não existir
         if cnpj_geradora not in geradoras_organizadas:
@@ -50,6 +70,8 @@ def organizar_faturas_por_geradora(faturas):
         # Adicionar tarefa baseada na situação de pagamento
         fatura_com_tarefa = fatura.copy()
         fatura_com_tarefa["tarefa"] = mapear_situacao_para_tarefa(situacao_pagamento)
+        # Atualizar o campo nova_uc com o valor processado
+        fatura_com_tarefa["nova_uc"] = nova_uc
         
         # Adicionar fatura à lista da UC
         geradoras_organizadas[cnpj_geradora]["lista_ucs"][nova_uc].append(fatura_com_tarefa)

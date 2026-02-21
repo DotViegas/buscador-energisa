@@ -188,18 +188,37 @@ def processar_geradora(geradora_cnpj):
             "[role='textbox']"
         ]
         
-        for seletor in seletores:
-            try:
-                print(f"   Tentando seletor: {seletor}")
-                cnpj_input = page.locator(seletor).first
-                cnpj_input.wait_for(state="visible", timeout=5000)
-                print(f"   ✅ Encontrado com: {seletor}")
+        cnpj_input = None
+        tentativas_reload = 0
+        max_tentativas = 3
+        
+        # Sistema de retry caso não encontre os seletores (página não carregou)
+        while tentativas_reload < max_tentativas:
+            tentativas_reload += 1
+            print(f"🔄 Tentativa {tentativas_reload}/{max_tentativas} para encontrar campo de CNPJ...")
+            
+            for seletor in seletores:
+                try:
+                    print(f"   Tentando seletor: {seletor}")
+                    cnpj_input = page.locator(seletor).first
+                    cnpj_input.wait_for(state="visible", timeout=5000)
+                    print(f"   ✅ Encontrado com: {seletor}")
+                    break
+                except:
+                    continue
+            
+            # Se encontrou, sair do loop
+            if cnpj_input:
                 break
-            except:
-                continue
+            
+            # Se não encontrou e ainda tem tentativas, recarregar
+            if tentativas_reload < max_tentativas:
+                print(f"⚠️ Página não carregou corretamente. Recarregando...")
+                page.reload(wait_until="networkidle")
+                time.sleep(3)
         
         if not cnpj_input:
-            print("❌ Nenhum campo de input encontrado!")
+            print(f"❌ Nenhum campo de input encontrado após {max_tentativas} tentativas!")
             page.screenshot(path="debug_sem_input.png")
             print("📸 Screenshot salvo: debug_sem_input.png")
             print("🔍 HTML da página:")
@@ -213,9 +232,8 @@ def processar_geradora(geradora_cnpj):
         page.get_by_role("button", name="ENTRAR").click()
         
         # Aguardar seleção de telefone aparecer
-        page.wait_for_selector("div:has-text('67')", timeout=30000)
-        page.locator("div").filter(has_text=re.compile(r"^67\*\*\*\*\*2038$")).click()
-        page.get_by_role("button", name="AVANÇAR").click()
+        page.wait_for_selector("button:has-text('67')", timeout=30000)
+        page.get_by_role("button", name="ícone de um celular azul 67*****2038").click()
         
         # Aguardar código SMS
         codigo = obter_codigo_email_com_reenvio_automatico(page, 600)
@@ -232,13 +250,16 @@ def processar_geradora(geradora_cnpj):
             print(f"Input 4 bloco: {input4}")
             
             # Preencher os campos com o código
-            page.wait_for_selector("input[name='input1']", state="visible", timeout=10000)
+            page.wait_for_selector("input[type='text']", state="visible", timeout=10000)
             
-            page.locator("input[name=\"input1\"]").fill(input1)
-            page.locator("input[name=\"input2\"]").fill(input2)
-            page.locator("input[name=\"input3\"]").fill(input3)
-            page.locator("input[name=\"input4\"]").fill(input4)
-            page.get_by_role("button", name="AVANÇAR").click()
+            page.get_by_role("textbox", name="Dígito 1 do código").click()
+            page.get_by_role("textbox", name="Dígito 1 do código").fill(input1)
+            page.get_by_role("textbox", name="Dígito 2 do código").click()
+            page.get_by_role("textbox", name="Dígito 2 do código").fill(input2)
+            page.get_by_role("textbox", name="Dígito 3 do código").click()
+            page.get_by_role("textbox", name="Dígito 3 do código").fill(input3)
+            page.get_by_role("textbox", name="Dígito 4 do código").click()
+            page.get_by_role("textbox", name="Dígito 4 do código").fill(input4)
 
             time.sleep(10)
 
@@ -276,29 +297,26 @@ def processar_geradora(geradora_cnpj):
                         page.wait_for_load_state("domcontentloaded")
                         time.sleep(2)  # Aguardar scripts JS carregarem
                         
-                        # Aguardar input estar disponível e interativo
-                        input_nome = page.get_by_test_id("input-nome")
-                        input_nome.wait_for(state="visible", timeout=15000)
-                        input_nome.wait_for(state="attached", timeout=5000)
+                        # Aguardar input de busca estar disponível
+                        input_busca = page.get_by_role("textbox", name="Busque pelo número da UC ou")
+                        input_busca.wait_for(state="visible", timeout=15000)
+                        input_busca.wait_for(state="attached", timeout=5000)
                         
                         # Garantir que o campo está pronto para interação
                         time.sleep(1)
                         
-                        # Limpar campo antes de preencher
-                        input_nome.click(timeout=10000)
-                        input_nome.fill("")  # Limpar primeiro
+                        # Clicar e preencher com a UC
+                        input_busca.click(timeout=10000)
+                        input_busca.fill("")  # Limpar primeiro
                         time.sleep(0.5)
                         
                         # Preencher com a UC
-                        input_nome.fill(nova_uc)
+                        input_busca.fill(nova_uc)
                         time.sleep(1)
                         
-                        # Clicar no resultado
-                        page.get_by_role("main").locator("span").click(timeout=10000)
+                        # Clicar no botão do resultado (button dentro do container de resultados)
+                        page.locator("button").filter(has_text="Código do Cliente:").first.click(timeout=10000)
                         time.sleep(1)
-                        
-                        # Clicar em avançar
-                        page.get_by_role("button", name="AVANÇAR").click(timeout=10000)
                         
                         uc_selecionada = True
                         print(f"   ✅ UC selecionada com sucesso")
