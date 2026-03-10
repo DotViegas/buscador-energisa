@@ -95,7 +95,7 @@ def fazer_login(p, geradora_cnpj):
     try:
         print("🦊 Tentando com Firefox...")
         browser = p.firefox.launch(
-            headless=False,
+            headless=True,
             firefox_user_prefs={
                 'dom.webdriver.enabled': False,
                 'useAutomationExtension': False,
@@ -105,7 +105,7 @@ def fazer_login(p, geradora_cnpj):
     except:
         print("⚠️ Firefox não disponível, usando Chromium...")
         browser = p.chromium.launch(
-            headless=False,
+            headless=True,
             args=[
                 '--disable-blink-features=AutomationControlled',
                 '--disable-dev-shm-usage',
