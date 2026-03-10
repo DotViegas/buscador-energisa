@@ -71,7 +71,7 @@ def obter_codigo_email_com_reenvio_automatico(page, timeout):
                 try:
                     print("\n🔄 Tentando reenviar código SMS...")
                     # Procurar pelo botão de reenviar código usando Playwright
-                    page.get_by_role("button", name="Recarregar REENVIAR CÓDIGO").click()
+                    page.get_by_role("button", name="Reenviar o código").click()
                     ultimo_reenvio = tempo_atual
                     print("✅ Botão de reenvio clicado com sucesso")
 

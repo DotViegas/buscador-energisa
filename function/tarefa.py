@@ -303,8 +303,8 @@ def executar_fatura_pendente(nova_uc, mes_referencia, page, fatura_id, primeira_
                 
                 print(f"Situação de pagamento detectada: {situacao_pagamento}")
                 
-                # Extrair valor da fatura
-                valor_element = card_completo.locator('.card-billing__price .min-w-\\[200px\\]')
+                # Extrair valor da fatura (seletor flexível para diferentes tamanhos)
+                valor_element = card_completo.locator('.card-billing__price div[class*="min-w-"]').first
                 valor_texto = valor_element.text_content().strip()
                 valor = valor_texto.replace('R$', '').replace(' ', '').replace(',', '.')
                 
@@ -459,8 +459,8 @@ def executar_fatura_vencida(nova_uc, mes_referencia, page, fatura_id, fatura_exi
                 
                 print(f"Situação de pagamento detectada: {situacao_pagamento}")
                 
-                # Extrair valor da fatura
-                valor_element = card_completo.locator('.card-billing__price .min-w-\\[200px\\]')
+                # Extrair valor da fatura (seletor flexível para diferentes tamanhos)
+                valor_element = card_completo.locator('.card-billing__price div[class*="min-w-"]').first
                 valor_texto = valor_element.text_content().strip()
                 valor = valor_texto.replace('R$', '').replace(' ', '').replace(',', '.')
 
