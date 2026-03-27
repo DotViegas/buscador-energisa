@@ -97,33 +97,22 @@ def fazer_login(p, geradora_cnpj):
     """Realiza o processo de login e retorna browser, context e page"""
     print("🔐 Iniciando processo de Login")
     
-    # Tentar Firefox primeiro (menos detectado)
-    try:
-        print("🦊 Tentando com Firefox...")
-        browser = p.firefox.launch(
-            headless=True,
-            firefox_user_prefs={
-                'dom.webdriver.enabled': False,
-                'useAutomationExtension': False,
-                'general.useragent.override': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0'
-            }
-        )
-    except:
-        print("⚠️ Firefox não disponível, usando Chromium...")
-        browser = p.chromium.launch(
-            headless=True,
-            args=[
-                '--disable-blink-features=AutomationControlled',
-                '--disable-dev-shm-usage',
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-web-security',
-                '--disable-features=IsolateOrigins,site-per-process'
-            ]
-        )
+    # Usar Chromium como padrão
+    print("🌐 Iniciando Chromium...")
+    browser = p.chromium.launch(
+        headless=False,
+        args=[
+            '--disable-blink-features=AutomationControlled',
+            '--disable-dev-shm-usage',
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-web-security',
+            '--disable-features=IsolateOrigins,site-per-process'
+        ]
+    )
     
     context = browser.new_context(
-        viewport={'width': 1920, 'height': 1080},
+        viewport={'width': 1280, 'height': 720},
         locale='pt-BR',
         timezone_id='America/Sao_Paulo',
         permissions=['geolocation']
@@ -160,63 +149,11 @@ def fazer_login(p, geradora_cnpj):
         page.screenshot(path="debug_erro.png")
         print("📸 Screenshot de erro salvo: debug_erro.png")
     
-    # Tentar múltiplos seletores para o campo de CNPJ
-    print("🔍 Procurando campo de CNPJ...")
-    cnpj_input = None
-    
-    # Lista de seletores para tentar
-    seletores = [
-        "input[placeholder*='CPF']",
-        "input[placeholder*='CNPJ']", 
-        "input[type='text']",
-        "input[type='tel']",
-        "input.input",
-        "input",
-        "[role='textbox']"
-    ]
-    
-    cnpj_input = None
-    tentativas_reload = 0
-    max_tentativas = 3
-    
-    # Sistema de retry caso não encontre os seletores (página não carregou)
-    while tentativas_reload < max_tentativas:
-        tentativas_reload += 1
-        print(f"🔄 Tentativa {tentativas_reload}/{max_tentativas} para encontrar campo de CNPJ...")
-        
-        for seletor in seletores:
-            try:
-                print(f"   Tentando seletor: {seletor}")
-                cnpj_input = page.locator(seletor).first
-                cnpj_input.wait_for(state="visible", timeout=5000)
-                print(f"   ✅ Encontrado com: {seletor}")
-                break
-            except:
-                continue
-        
-        # Se encontrou, sair do loop
-        if cnpj_input:
-            break
-        
-        # Se não encontrou e ainda tem tentativas, recarregar
-        if tentativas_reload < max_tentativas:
-            print(f"⚠️ Página não carregou corretamente. Recarregando...")
-            page.reload(wait_until="networkidle")
-            time.sleep(3)
-    
-    if not cnpj_input:
-        print(f"❌ Nenhum campo de input encontrado após {max_tentativas} tentativas!")
-        page.screenshot(path="debug_sem_input.png")
-        print("📸 Screenshot salvo: debug_sem_input.png")
-        print("🔍 HTML da página:")
-        print(page.content()[:1000])  # Primeiros 1000 caracteres
-        browser.close()
-        return None, None, None
-    
+    # Selecionar campo de CNPJ
     print("✏️ Preenchendo CNPJ...")
-    cnpj_input.click()
-    cnpj_input.fill(geradora_cnpj)
-    page.get_by_role("button", name="ENTRAR").click()
+    page.get_by_role("textbox", name="Digite o seu CPF ou CNPJ").click()
+    page.get_by_role("textbox", name="Digite o seu CPF ou CNPJ").fill(geradora_cnpj)
+    page.get_by_role("button", name="Entrar").click()
     
     # Aguardar seleção de telefone aparecer
     page.wait_for_selector("button:has-text('67')", timeout=30000)
@@ -685,18 +622,18 @@ if __name__ == "__main__":
     log_duplo = iniciar_log()
     
     try:
-        # Processar todas as geradoras em loop
-        print("🚀 Iniciando processamento de todas as geradoras...")
-        processar_todas_geradoras()
+        # # Processar todas as geradoras em loop
+        # print("🚀 Iniciando processamento de todas as geradoras...")
+        # processar_todas_geradoras()
         
-        # # Para processar geradoras específicas:
-        # processar_usinas = [
-        #    USINA_ENERGIAA_CNPJ,
-        #    USINA_LUZDIVINA_CNPJ,
-        #    USINA_G114_CNPJ
-        # ]
-        # print(f"🚀 Iniciando processamento das usinas {processar_usinas}...")
-        # processar_multiplas_geradoras(processar_usinas)
+        # Para processar geradoras específicas:
+        processar_usinas = [
+            USINA_ENERGIAA_CNPJ,
+            USINA_LUZDIVINA_CNPJ,
+            USINA_G114_CNPJ
+        ]
+        print(f"🚀 Iniciando processamento das usinas {processar_usinas}...")
+        processar_multiplas_geradoras(processar_usinas)
         
         print("=" * 80)
         print(f"✅ Execução finalizada com sucesso!")
