@@ -127,7 +127,9 @@ class DatabaseManager:
                                 mensagem_erro: Optional[str] = None,
                                 valor: Optional[str] = None,
                                 data_vencimento: Optional[str] = None,
-                                situacao_pagamento: Optional[str] = None) -> bool:
+                                situacao_pagamento: Optional[str] = None,
+                                tipo_operacao: Optional[str] = None,
+                                log_execucao: Optional[str] = None) -> bool:
         """
         Atualiza o status de uma fatura após processamento
         
@@ -138,6 +140,8 @@ class DatabaseManager:
             valor (str): Valor da fatura
             data_vencimento (str): Data de vencimento
             situacao_pagamento (str): Situação de pagamento
+            tipo_operacao (str): Tipo de operação realizada (nao_encontrada, criada, atualizada, situacao_alterada, erro)
+            log_execucao (str): Log completo da execução da fatura
         
         Returns:
             bool: True se atualizou, False se erro
@@ -155,7 +159,9 @@ class DatabaseManager:
                     mensagem_erro = ?,
                     valor = ?,
                     data_vencimento = ?,
-                    situacao_pagamento = ?
+                    situacao_pagamento = ?,
+                    tipo_operacao = ?,
+                    log_execucao = ?
                 WHERE id = ?
             """, (
                 status,
@@ -164,13 +170,18 @@ class DatabaseManager:
                 valor,
                 data_vencimento,
                 situacao_pagamento,
+                tipo_operacao,
+                log_execucao,
                 fatura_id
             ))
             
             conn.commit()
             conn.close()
             
-            print(f"   ✅ Status da fatura ID {fatura_id} atualizado para: {status}")
+            if tipo_operacao:
+                print(f"   ✅ Status da fatura ID {fatura_id} atualizado para: {status} | Operação: {tipo_operacao}")
+            else:
+                print(f"   ✅ Status da fatura ID {fatura_id} atualizado para: {status}")
             return True
             
         except Exception as e:

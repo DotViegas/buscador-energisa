@@ -30,6 +30,8 @@ def inicializar_banco(db_path="database/faturas.db"):
             valor TEXT,
             data_vencimento TEXT,
             situacao_pagamento TEXT,
+            tipo_operacao TEXT,
+            log_execucao TEXT,
             UNIQUE(id)
         )
     """)

@@ -483,7 +483,9 @@ def processar_geradora(geradora_cnpj, force=False):
                             db.atualizar_status_fatura(
                                 fatura_id=fatura_id,
                                 status='sucesso',
-                                mensagem_erro='UC sem faturas no portal'
+                                mensagem_erro='UC sem faturas no portal',
+                                tipo_operacao='nao_encontrada',
+                                log_execucao=f"UC {nova_uc} sem faturas geradas no portal Energisa"
                             )
                             print(f"   ✅ Fatura ID {fatura_id} marcada como sucesso (UC sem faturas)")
                         

@@ -145,6 +145,9 @@ def processar_faturas_do_json(json_data, page, force=False):
         page: Instância da página do Playwright
         force (bool): Se True, reprocessa faturas com erro
     """
+    import io
+    import sys
+    
     try:
         geradora = json_data.get("geradora")
         lista_ucs = json_data.get("lista_ucs", {})
@@ -171,6 +174,23 @@ def processar_faturas_do_json(json_data, page, force=False):
                 mes_referencia = fatura.get("data_referencia")
                 tarefa = fatura.get("tarefa")
                 
+                # Capturar log da execução desta fatura
+                log_buffer = io.StringIO()
+                old_stdout = sys.stdout
+                
+                # Criar um escritor que duplica para console e buffer
+                class DualWriter:
+                    def __init__(self, *writers):
+                        self.writers = writers
+                    def write(self, text):
+                        for writer in self.writers:
+                            writer.write(text)
+                    def flush(self):
+                        for writer in self.writers:
+                            writer.flush()
+                
+                sys.stdout = DualWriter(old_stdout, log_buffer)
+                
                 print(f"Processando fatura ID: {fatura_id}, Mês: {mes_referencia}, Tarefa: {tarefa}")
                 
                 # Verificar status no banco de dados
@@ -181,6 +201,9 @@ def processar_faturas_do_json(json_data, page, force=False):
                         print(f"   ⏭️ Fatura ID {fatura_id} já processada com SUCESSO - pulando")
                     elif status_db == 'erro':
                         print(f"   ⏭️ Fatura ID {fatura_id} com ERRO anterior - pulando (use --force para reprocessar)")
+                    
+                    # Restaurar stdout
+                    sys.stdout = old_stdout
                     
                     faturas_puladas_uc += 1
                     resultados.append({
@@ -199,32 +222,55 @@ def processar_faturas_do_json(json_data, page, force=False):
                 
                 # Variável para armazenar resultado
                 resultado = False
+                tipo_operacao = None
+                dados_fatura = {}
                 
                 try:
                     if tarefa == "fatura_pendente":
-                        resultado = executar_fatura_pendente(nova_uc, mes_referencia, page, fatura_id, eh_primeira_fatura)
+                        resultado, tipo_operacao, dados_fatura = executar_fatura_pendente(nova_uc, mes_referencia, page, fatura_id, eh_primeira_fatura)
                         
                     elif tarefa == "fatura_vencida":
-                        resultado = executar_fatura_vencida(nova_uc, mes_referencia, page, fatura_id, fatura, eh_primeira_fatura)
+                        resultado, tipo_operacao, dados_fatura = executar_fatura_vencida(nova_uc, mes_referencia, page, fatura_id, fatura, eh_primeira_fatura)
                         
                     elif tarefa == "fatura_a_vencer":
                         # Usar a função de fatura vencida para faturas a vencer (com verificação de mudanças)
-                        resultado = executar_fatura_vencida(nova_uc, mes_referencia, page, fatura_id, fatura, eh_primeira_fatura)
+                        resultado, tipo_operacao, dados_fatura = executar_fatura_vencida(nova_uc, mes_referencia, page, fatura_id, fatura, eh_primeira_fatura)
                     
                     elif tarefa == "fatura_agendado":
                         # Processar fatura agendada - verificar se foi paga
-                        resultado = executar_fatura_agendada(nova_uc, mes_referencia, page, fatura_id, fatura, eh_primeira_fatura)
+                        resultado, tipo_operacao, dados_fatura = executar_fatura_agendada(nova_uc, mes_referencia, page, fatura_id, fatura, eh_primeira_fatura)
                     
                     else:
                         print(f"⚠️ Tarefa desconhecida: {tarefa}")
                         resultado = False
+                        tipo_operacao = "erro"
                     
-                    # Atualizar status no banco de dados
+                    # Capturar log antes de restaurar stdout
+                    log_execucao = log_buffer.getvalue()
+                    
+                    # Restaurar stdout
+                    sys.stdout = old_stdout
+                    
+                    # Atualizar status no banco de dados com todos os dados
                     if resultado:
-                        db.atualizar_status_fatura(fatura_id, 'sucesso')
+                        db.atualizar_status_fatura(
+                            fatura_id=fatura_id,
+                            status='sucesso',
+                            valor=dados_fatura.get('valor'),
+                            data_vencimento=dados_fatura.get('data_vencimento'),
+                            situacao_pagamento=dados_fatura.get('situacao_pagamento'),
+                            tipo_operacao=tipo_operacao,
+                            log_execucao=log_execucao
+                        )
                         faturas_sucesso_uc += 1
                     else:
-                        db.atualizar_status_fatura(fatura_id, 'erro', mensagem_erro=f"Falha ao processar {tarefa}")
+                        db.atualizar_status_fatura(
+                            fatura_id=fatura_id,
+                            status='erro',
+                            mensagem_erro=f"Falha ao processar {tarefa}",
+                            tipo_operacao=tipo_operacao or "erro",
+                            log_execucao=log_execucao
+                        )
                         faturas_erro_uc += 1
                     
                     resultados.append({
@@ -238,7 +284,20 @@ def processar_faturas_do_json(json_data, page, force=False):
                     
                 except Exception as e_fatura:
                     print(f"❌ Exceção ao processar fatura ID {fatura_id}: {str(e_fatura)}")
-                    db.atualizar_status_fatura(fatura_id, 'erro', mensagem_erro=str(e_fatura))
+                    
+                    # Capturar log antes de restaurar stdout
+                    log_execucao = log_buffer.getvalue()
+                    
+                    # Restaurar stdout
+                    sys.stdout = old_stdout
+                    
+                    db.atualizar_status_fatura(
+                        fatura_id=fatura_id,
+                        status='erro',
+                        mensagem_erro=str(e_fatura),
+                        tipo_operacao="erro",
+                        log_execucao=log_execucao
+                    )
                     faturas_erro_uc += 1
                     
                     resultados.append({
@@ -292,6 +351,9 @@ def executar_fatura_pendente(nova_uc, mes_referencia, page, fatura_id, primeira_
         page: Instância da página do Playwright
         fatura_id (int): ID da fatura do JSON
         primeira_fatura (bool): Se é a primeira fatura da geradora
+    
+    Returns:
+        tuple: (sucesso, tipo_operacao, dados_fatura)
     """
     try:
         print(f"Iniciando processamento de fatura pendente para UC: {nova_uc}, Mês: {mes_referencia}")
@@ -378,7 +440,7 @@ def executar_fatura_pendente(nova_uc, mes_referencia, page, fatura_id, primeira_
                 
                 if arquivo_base64 is None:
                     print("❌ Falha no download da fatura após todas as tentativas")
-                    return False
+                    return False, "erro", {}
                 
                 dados_fatura = {
                     "valor": valor,
@@ -393,7 +455,7 @@ def executar_fatura_pendente(nova_uc, mes_referencia, page, fatura_id, primeira_
         
         if not fatura_encontrada:
             print(f"ℹ️ Fatura não localizada para o mês {mes_busca} - situação normal")
-            return True  # Retorna True pois não é um erro, apenas não foi encontrada
+            return True, "nao_encontrada", {}  # Retorna True pois não é um erro, apenas não foi encontrada
         
         # 4. Enviar requisição para a API
         if debug_mode:
@@ -426,15 +488,15 @@ def executar_fatura_pendente(nova_uc, mes_referencia, page, fatura_id, primeira_
         
         if response.status_code == 200:
             print("✅ Fatura enviada com sucesso para a API")
-            return True
+            return True, "criada", dados_fatura
         else:
             print(f"❌ Erro ao enviar fatura para API: {response.status_code}")
             print(f"Resposta: {response.text}")
-            return False
+            return False, "erro", dados_fatura
             
     except Exception as e:
         print(f"❌ Erro durante processamento da fatura pendente: {str(e)}")
-        return False
+        return False, "erro", {}
 
 
 def executar_fatura_vencida(nova_uc, mes_referencia, page, fatura_id, fatura_existente=None, primeira_fatura=False):
@@ -548,11 +610,12 @@ def executar_fatura_vencida(nova_uc, mes_referencia, page, fatura_id, fatura_exi
         
         if not fatura_encontrada:
             print(f"ℹ️ Fatura não localizada para o mês {mes_busca} - situação normal")
-            return True  # Retorna True pois não é um erro, apenas não foi encontrada
+            return True, "nao_encontrada", {}  # Retorna True pois não é um erro, apenas não foi encontrada
         
         # 4. Verificar se houve mudanças além da situação de pagamento
         apenas_situacao_mudou = False
         precisa_download = True  # Por padrão, assume que precisa fazer download
+        tipo_operacao = "atualizada"  # Padrão para fatura vencida
         
         if fatura_existente:
             # Comparar dados atuais com os existentes
@@ -569,12 +632,17 @@ def executar_fatura_vencida(nova_uc, mes_referencia, page, fatura_id, fatura_exi
             if situacao_mudou and not valor_mudou and not vencimento_mudou:
                 apenas_situacao_mudou = True
                 precisa_download = False  # Não precisa fazer download se só a situação mudou
+                tipo_operacao = "situacao_alterada"
                 print("📋 Detectado: Apenas situação de pagamento foi alterada - download não necessário")
             elif situacao_mudou or valor_mudou or vencimento_mudou:
+                tipo_operacao = "atualizada"
                 print("📋 Detectado: Múltiplos campos foram alterados - download necessário")
             else:
                 print("📋 Nenhuma alteração detectada")
-                return True  # Não há necessidade de atualizar
+                return True, "sem_alteracao", dados_fatura  # Não há necessidade de atualizar
+        else:
+            # Primeira vez processando esta fatura
+            tipo_operacao = "criada"
         
         # 5. Fazer download apenas se necessário
         if precisa_download:
@@ -583,7 +651,7 @@ def executar_fatura_vencida(nova_uc, mes_referencia, page, fatura_id, fatura_exi
             
             if arquivo_base64 is None:
                 print("❌ Falha no download da fatura após todas as tentativas")
-                return False
+                return False, "erro", dados_fatura
             
             # Atualizar dados da fatura com o arquivo
             dados_fatura["arquivo_fatura"] = arquivo_base64
@@ -622,7 +690,7 @@ def executar_fatura_vencida(nova_uc, mes_referencia, page, fatura_id, fatura_exi
             # Verificar se o arquivo foi baixado
             if dados_fatura["arquivo_fatura"] is None:
                 print("❌ Erro: Tentativa de enviar dados completos sem arquivo da fatura")
-                return False
+                return False, "erro", dados_fatura
             
             body = {
                 "id": fatura_id,
@@ -648,15 +716,15 @@ def executar_fatura_vencida(nova_uc, mes_referencia, page, fatura_id, fatura_exi
                 print("✅ Situação de pagamento atualizada com sucesso")
             else:
                 print("✅ Fatura enviada com sucesso para a API")
-            return True
+            return True, tipo_operacao, dados_fatura
         else:
             print(f"❌ Erro ao enviar para API: {response.status_code}")
             print(f"Resposta: {response.text}")
-            return False
+            return False, "erro", dados_fatura
             
     except Exception as e:
         print(f"❌ Erro durante processamento da fatura vencida: {str(e)}")
-        return False
+        return False, "erro", {}
 
 
 def executar_fatura_agendada(nova_uc, mes_referencia, page, fatura_id, fatura_existente=None, primeira_fatura=False):
@@ -671,6 +739,9 @@ def executar_fatura_agendada(nova_uc, mes_referencia, page, fatura_id, fatura_ex
         fatura_id (int): ID da fatura do JSON
         fatura_existente (dict): Dados da fatura existente para comparação (opcional)
         primeira_fatura (bool): Se é a primeira fatura da geradora
+    
+    Returns:
+        tuple: (sucesso, tipo_operacao, dados_fatura)
     """
     try:
         print(f"Iniciando processamento de fatura agendada para UC: {nova_uc}, Mês: {mes_referencia}")
@@ -687,6 +758,7 @@ def executar_fatura_agendada(nova_uc, mes_referencia, page, fatura_id, fatura_ex
         
         fatura_encontrada = False
         situacao_pagamento = None
+        dados_fatura = {}
         
         # 3. Verificar se existe o card referente ao mês buscado
         for i in range(cards_count):
@@ -734,11 +806,16 @@ def executar_fatura_agendada(nova_uc, mes_referencia, page, fatura_id, fatura_ex
                     situacao_pagamento = "desconhecida"
                 
                 print(f"Situação de pagamento detectada: {situacao_pagamento}")
+                
+                dados_fatura = {
+                    "situacao_pagamento": situacao_pagamento
+                }
+                
                 break
         
         if not fatura_encontrada:
             print(f"ℹ️ Fatura não localizada para o mês {mes_busca}")
-            return True  # Retorna True pois não é um erro, apenas não foi encontrada
+            return True, "nao_encontrada", {}  # Retorna True pois não é um erro, apenas não foi encontrada
         
         # 4. Lógica específica para fatura agendada - APENAS atualização de situação
         # Se a fatura foi paga, atualizar para "paga"
@@ -767,21 +844,21 @@ def executar_fatura_agendada(nova_uc, mes_referencia, page, fatura_id, fatura_ex
             
             if response.status_code == 200:
                 print("✅ Fatura atualizada para 'paga' com sucesso")
-                return True
+                return True, "situacao_alterada", dados_fatura
             else:
                 print(f"❌ Erro ao enviar para API: {response.status_code}")
                 print(f"Resposta: {response.text}")
-                return False
+                return False, "erro", dados_fatura
         
         elif situacao_pagamento in ["a_vencer", "vencida"]:
             print(f"📅 Fatura ainda está como '{situacao_pagamento}' - mantendo como 'agendado'")
             print("✓ Nenhuma mudança detectada - não é necessário enviar para API")
-            return True
+            return True, "sem_alteracao", dados_fatura
         
         else:
             print(f"⚠️ Situação de pagamento inesperada: {situacao_pagamento}")
-            return False
+            return False, "erro", dados_fatura
             
     except Exception as e:
         print(f"❌ Erro durante processamento da fatura agendada: {str(e)}")
-        return False
+        return False, "erro", {}

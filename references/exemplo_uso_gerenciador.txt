@@ -1,0 +1,90 @@
+═══════════════════════════════════════════════════════════════════════════════
+EXEMPLO DE USO DO GERENCIADOR DE FATURAS
+═══════════════════════════════════════════════════════════════════════════════
+
+CENÁRIO 1: Gerar relatório do dia após executar o robô
+───────────────────────────────────────────────────────────────────────────────
+
+1. Execute o robô:
+   > python robo.py
+
+2. Após conclusão, execute o gerenciador:
+   > python gerenciar_faturas.py
+
+3. Escolha opção 1:
+   Você gostaria de fazer qual operação?
+   1 - Salvar relatório de hoje
+   > 1
+
+4. Resultado:
+   ✅ Relatório salvo: relatorio_faturas_27032026.xlsx
+   📊 Total de faturas: 561
+   ✅ Sucesso: 560
+   ❌ Erro: 1
+   📈 Taxa de sucesso: 99.8%
+
+
+CENÁRIO 2: Gerar relatório semanal
+───────────────────────────────────────────────────────────────────────────────
+
+1. Execute o gerenciador:
+   > python gerenciar_faturas.py
+
+2. Escolha opção 2:
+   Você gostaria de fazer qual operação?
+   2 - Salvar relatório com intervalo específico
+   > 2
+
+3. Informe as datas:
+   Data inicial: 20/03/2026
+   Data final: 27/03/2026
+
+4. Resultado:
+   ✅ Relatório gerado: relatorio_faturas_20032026_a_27032026.xlsx
+
+
+CENÁRIO 3: Verificar o que precisa processar
+───────────────────────────────────────────────────────────────────────────────
+
+1. Execute o gerenciador:
+   > python gerenciar_faturas.py
+
+2. Escolha opção 3:
+   Você gostaria de fazer qual operação?
+   3 - Verificar se existem faturas a_verificar
+   > 3
+
+3. Resultado:
+   📊 DISTRIBUIÇÃO POR STATUS:
+      a_verificar: 22 faturas
+      erro: 1 faturas
+      sucesso: 560 faturas
+
+   ⚠️ Existem 22 faturas com status 'a_verificar'
+
+   📋 FATURAS PENDENTES POR GERADORA:
+      250.262.911-04: 15 faturas
+      58.179.054/0001-46: 7 faturas
+
+   Deseja ver a lista completa de faturas pendentes? (s/n): s
+
+   📋 PRIMEIRAS 50 FATURAS PENDENTES:
+      ID: 3505 | UC: 3557293 | Mês: 03/2026 | CNPJ: 250.262.911-04
+      ID: 3426 | UC: 3557226 | Mês: 03/2026 | CNPJ: 250.262.911-04
+      ...
+
+
+FLUXO DE TRABALHO RECOMENDADO
+───────────────────────────────────────────────────────────────────────────────
+
+MANHÃ:
+1. python gerenciar_faturas.py → Opção 3 (verificar pendentes)
+2. python robo.py (processar faturas)
+
+TARDE:
+3. python gerenciar_faturas.py → Opção 1 (relatório do dia)
+4. Enviar relatório XLSX para equipe
+
+FIM DE SEMANA:
+5. python gerenciar_faturas.py → Opção 2 (relatório semanal)
+6. Análise consolidada da semana
