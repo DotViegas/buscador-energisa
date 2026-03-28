@@ -70,26 +70,39 @@ def iniciar_log():
     return log_duplo
 
 def verificar_access_denied(page):
-    """Verifica se a página contém bloqueio 'Access Denied'"""
+    """Verifica se a página contém bloqueio 'Access Denied'
+    
+    Returns:
+        bool: True se detectou Access Denied, False caso contrário
+    
+    Raises:
+        SystemExit: Interrompe a execução do robô se Access Denied for detectado
+    """
     try:
         # Verificar se existe texto "Access Denied" na página
         if page.locator('text=Access Denied').count() > 0:
-            print("🚫 Detectado bloqueio 'Access Denied'")
-            return True
+            print("🚫 BLOQUEIO DETECTADO: 'Access Denied'")
+            print("🛑 PARANDO EXECUÇÃO DO ROBÔ CONFORME CONFIGURADO")
+            raise SystemExit("Execução interrompida: Access Denied detectado")
         
         # Verificar também no título da página
         titulo = page.title().lower()
         if 'access denied' in titulo or 'acesso negado' in titulo:
-            print("🚫 Detectado bloqueio no título da página")
-            return True
+            print("🚫 BLOQUEIO DETECTADO: 'Access Denied' no título da página")
+            print("🛑 PARANDO EXECUÇÃO DO ROBÔ CONFORME CONFIGURADO")
+            raise SystemExit("Execução interrompida: Access Denied detectado no título")
         
         # Verificar se a URL atual é de logout (indicativo de Access Denied)
         current_url = page.url
         if '/logout' in current_url:
-            print("🚫 Detectado bloqueio 'Access Denied' - URL de logout")
-            return True
+            print("🚫 BLOQUEIO DETECTADO: 'Access Denied' - URL de logout")
+            print("🛑 PARANDO EXECUÇÃO DO ROBÔ CONFORME CONFIGURADO")
+            raise SystemExit("Execução interrompida: Access Denied detectado (logout)")
             
         return False
+    except SystemExit:
+        # Re-lançar SystemExit para parar a execução
+        raise
     except Exception as e:
         print(f"⚠️ Erro ao verificar Access Denied: {str(e)}")
         return False
@@ -254,7 +267,7 @@ def processar_geradora(geradora_cnpj, force=False):
             print("❌ Falha no login inicial")
             return False
 
-        # 4. Processar cada UC com sistema de retry
+        # 4. Processar cada UC com sistema de retry e renovação de login a cada 30 UCs
         ucs_processadas = 0
         total_ucs = len(lista_ucs)
         lista_ucs_items = list(lista_ucs.items())  # Converter para lista para controle de índice
@@ -265,6 +278,25 @@ def processar_geradora(geradora_cnpj, force=False):
             ucs_processadas = i + 1
             print(f"\n🔄 Processando UC {ucs_processadas}/{total_ucs}: {nova_uc}")
             print(f"📊 Faturas para processar: {len(faturas_uc)}")
+            
+            # Verificar se precisa renovar login a cada 50 UCs
+            if ucs_processadas > 1 and (ucs_processadas - 1) % 50 == 0:
+                print(f"\n🔄 50 UCs processadas! Renovando login...")
+                try:
+                    browser.close()
+                    print("✅ Navegador fechado")
+                except:
+                    pass
+                
+                time.sleep(3)
+                print("🔐 Fazendo novo login...")
+                browser, context, page = fazer_login(p, geradora_cnpj)
+                
+                if not browser or not page:
+                    print("❌ Falha ao renovar login. Abortando processamento.")
+                    return False
+                
+                print("✅ Login renovado com sucesso! Continuando processamento...")
 
             max_tentativas_uc = 3  # Máximo de tentativas para cada UC
             tentativa_uc = 0
@@ -277,29 +309,9 @@ def processar_geradora(geradora_cnpj, force=False):
 
                 try:
                     # Verificar se há bloqueio "Access Denied" antes de processar
+                    # Esta função agora para a execução automaticamente se detectar bloqueio
                     print("🔍 Verificando bloqueio de acesso...")
-                    if verificar_access_denied(page):
-                        print("🔄 Detectado bloqueio! Reiniciando sessão...")
-
-                        # Fechar navegador atual
-                        try:
-                            browser.close()
-                            print("✅ Navegador fechado")
-                        except:
-                            pass
-
-                        # Aguardar um pouco antes de reconectar
-                        time.sleep(5)
-
-                        # Fazer login novamente
-                        print("🔐 Refazendo login...")
-                        browser, context, page = fazer_login(p, geradora_cnpj)
-
-                        if not browser or not page:
-                            print("❌ Falha ao refazer login. Abortando processamento.")
-                            return False
-
-                        print("✅ Login refeito com sucesso! Continuando processamento...")
+                    verificar_access_denied(page)
 
                     # Navegar para seleção de UC com retry robusto
                     tentativas_navegacao = 0
@@ -312,21 +324,8 @@ def processar_geradora(geradora_cnpj, force=False):
                             print(f"   🔄 Tentativa {tentativas_navegacao} de seleção da UC...")
 
                             # Verificar novamente se há bloqueio antes de navegar
-                            if verificar_access_denied(page):
-                                print("🔄 Bloqueio detectado durante navegação! Reiniciando sessão...")
-
-                                try:
-                                    browser.close()
-                                except:
-                                    pass
-
-                                time.sleep(5)
-                                browser, context, page = fazer_login(p, geradora_cnpj)
-
-                                if not browser or not page:
-                                    raise Exception("Falha ao refazer login durante navegação")
-
-                                print("✅ Sessão reiniciada, continuando...")
+                            # Esta função agora para a execução automaticamente se detectar bloqueio
+                            verificar_access_denied(page)
 
                             # Navegar para listagem
                             page.goto("https://servicos.energisa.com.br/login/listagem-ucs", wait_until="load", timeout=30000)
@@ -511,26 +510,13 @@ def processar_geradora(geradora_cnpj, force=False):
 
                     uc_processada_com_sucesso = True  # Marcar como sucesso
 
+                except SystemExit:
+                    # Access Denied detectado - propagar exceção para parar tudo
+                    print("🛑 Propagando interrupção por Access Denied...")
+                    raise
+                    
                 except Exception as e:
                     print(f"❌ Erro ao processar UC {nova_uc} (tentativa {tentativa_uc}): {str(e)}")
-
-                    # Se foi erro de Access Denied, URL inesperada ou logout, tentar reiniciar sessão
-                    if ("Access Denied" in str(e) or "URL inesperada" in str(e) or 
-                        "logout" in str(e).lower() or "/logout" in str(e)):
-                        print("🔄 Detectado problema de acesso (Access Denied), reiniciando sessão...")
-                        try:
-                            browser.close()
-                        except:
-                            pass
-                        
-                        time.sleep(5)
-                        browser, context, page = fazer_login(p, geradora_cnpj)
-                        
-                        if not browser or not page:
-                            print("❌ Falha ao refazer login. Tentativa será repetida.")
-                            continue
-                        
-                        print("✅ Sessão reiniciada, tentando novamente...")
                     
                     # Se não conseguiu após todas as tentativas, pular para próxima UC
                     if tentativa_uc >= max_tentativas_uc:
