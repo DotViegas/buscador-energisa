@@ -8,6 +8,7 @@ Microserviço automatizado para buscar, processar e atualizar faturas da Energis
 - [Tecnologias](#tecnologias)
 - [Arquitetura](#arquitetura)
 - [Estrutura do Projeto](#estrutura-do-projeto)
+- [Sistema de Banco de Dados](#sistema-de-banco-de-dados)
 - [Instalação](#instalação)
 - [Configuração](#configuração)
 - [Como Usar](#como-usar)
@@ -23,17 +24,19 @@ Microserviço automatizado para buscar, processar e atualizar faturas da Energis
 Este sistema automatiza o processamento de faturas da Energisa, realizando:
 
 1. Busca de faturas via API do GEUS
-2. Organização de dados por geradora e UC
-3. Login automático no portal Energisa com verificação SMS
-4. Navegação e extração de dados das faturas
-5. Download de PDFs das faturas
-6. Atualização dos dados no sistema GEUS
+2. Controle de processamento via banco de dados SQLite
+3. Organização de dados por geradora e UC
+4. Login automático no portal Energisa com verificação SMS
+5. Navegação e extração de dados das faturas
+6. Download de PDFs das faturas
+7. Atualização dos dados no sistema GEUS
 
 ## 🛠️ Tecnologias
 
 - **Python 3.x**: Linguagem principal
 - **FastAPI**: Framework web assíncrono para API REST
 - **Playwright**: Automação de navegador para web scraping
+- **SQLite**: Banco de dados para controle de processamento
 - **Requests**: Cliente HTTP para integração com APIs
 - **python-dotenv**: Gerenciamento de variáveis de ambiente
 - **IMAP**: Protocolo para recebimento de códigos SMS via email
@@ -43,14 +46,15 @@ Este sistema automatiza o processamento de faturas da Energisa, realizando:
 ### Fluxo Principal
 
 ```
-API GEUS → Busca Faturas → Organiza por Geradora → Login Energisa
+API GEUS → Busca Faturas → Salva no BD → Organiza por Geradora → Login Energisa
     ↓
-Processa UCs → Extrai Dados → Download PDFs → Atualiza GEUS
+Verifica BD → Processa UCs → Extrai Dados → Download PDFs → Atualiza GEUS + BD
 ```
 
 ### Componentes
 
 - **API REST (FastAPI)**: Interface para iniciar processamentos
+- **Banco de Dados (SQLite)**: Controle de status e histórico
 - **Robô (Playwright)**: Automação de navegação e extração
 - **Integração API**: Comunicação com sistema GEUS
 - **Processador de Tarefas**: Lógica de negócio para cada tipo de fatura
@@ -63,10 +67,18 @@ Processa UCs → Extrai Dados → Download PDFs → Atualiza GEUS
 ├── robo.py                          # Orquestrador principal do processamento
 ├── config.py                        # Configurações e variáveis de ambiente
 ├── geradoras.py                     # CNPJs das geradoras cadastradas
+├── db_utils.py                      # Utilitário CLI para gerenciar banco
+├── exemplo_uso_db.py                # Exemplo de uso do banco de dados
 ├── mapeamento_cnpj_arquivos.py      # Utilitário de mapeamento
 ├── relatorio_execucao.py            # Gerador de relatórios
 ├── requirements.txt                 # Dependências do projeto
 ├── .env                             # Variáveis de ambiente (não versionado)
+├── database/
+│   ├── __init__.py                  # Módulo de banco de dados
+│   ├── db_manager.py                # Gerenciador de operações do BD
+│   ├── models.py                    # Definição das tabelas
+│   ├── faturas.db                   # Arquivo do banco SQLite (gerado)
+│   └── README.md                    # Documentação do banco
 ├── function/
 │   ├── buscar_dados_api.py          # Busca e organização de faturas da API
 │   ├── codigo_sms.py                # Obtenção de códigos SMS via email
@@ -75,6 +87,45 @@ Processa UCs → Extrai Dados → Download PDFs → Atualiza GEUS
 └── media/
     └── json/                        # JSONs organizados por geradora (CNPJ)
 ```
+
+## 💾 Sistema de Banco de Dados
+
+O sistema utiliza SQLite para controlar o processamento e evitar reprocessamento desnecessário.
+
+### Status de Faturas
+
+- **`a_verificar`**: Faturas pendentes de processamento
+- **`sucesso`**: Faturas processadas com sucesso (não serão reprocessadas)
+- **`erro`**: Faturas que falharam (não serão reprocessadas sem --force)
+
+### Parâmetro --force
+
+Para reprocessar faturas com erro:
+
+```bash
+python robo.py --force
+```
+
+### Utilitários do Banco
+
+```bash
+# Inicializar banco
+python db_utils.py init
+
+# Ver estatísticas
+python db_utils.py stats
+
+# Resetar erros para reprocessamento
+python db_utils.py reset-errors
+
+# Ver execuções do dia
+python db_utils.py execucoes
+
+# Limpar faturas antigas
+python db_utils.py clean 90
+```
+
+📖 **Documentação completa:** [database/README.md](database/README.md)
 
 ## 🚀 Instalação
 
@@ -157,6 +208,16 @@ USINA_G114_CNPJ = "52.028.408/0001-75"
 
 ## 💻 Como Usar
 
+### Primeira Execução
+
+```bash
+# 1. Inicializar banco de dados
+python db_utils.py init
+
+# 2. Executar processamento
+python robo.py
+```
+
 ### Iniciar o Servidor FastAPI
 
 ```bash
@@ -167,15 +228,35 @@ O servidor estará disponível em `http://localhost:8000`
 
 ### Executar Processamento Direto
 
-```python
+```bash
 # Processar todas as geradoras
 python robo.py
 
-# Ou importar e usar funções específicas
-from robo import processar_geradora_especifica
-from geradoras import USINA_LUNA_CNPJ
+# Processar com reprocessamento de erros
+python robo.py --force
 
-processar_geradora_especifica(USINA_LUNA_CNPJ)
+# Ou via batch
+executar_robo.bat
+executar_robo.bat --force
+```
+
+### Gerenciar Banco de Dados
+
+```bash
+# Ver estatísticas gerais
+python db_utils.py stats
+
+# Ver estatísticas de uma geradora
+python db_utils.py stats "47.278.309/0001-01"
+
+# Resetar faturas com erro
+python db_utils.py reset-errors
+
+# Ver execuções de hoje
+python db_utils.py execucoes
+
+# Limpar faturas antigas (90 dias)
+python db_utils.py clean
 ```
 
 ## 🌐 API Endpoints

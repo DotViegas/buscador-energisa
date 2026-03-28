@@ -3,6 +3,7 @@ import base64
 from datetime import datetime
 from playwright.sync_api import sync_playwright
 from config import DEBUG_MODE, API_CRIAR_FATURA_DEV, API_CRIAR_FATURA_PROD, API_ATUALIZAR_FATURA_DEV , API_ATUALIZAR_FATURA_PROD, GEUS_APIKEY
+from database import DatabaseManager
 
 debug_mode = DEBUG_MODE
 
@@ -135,13 +136,14 @@ def fazer_download_com_retry(page, download_button, nova_uc, mes_referencia, pri
     
     return arquivo_base64
 
-def processar_faturas_do_json(json_data, page):
+def processar_faturas_do_json(json_data, page, force=False):
     """
     Processa as faturas do JSON e chama as funções apropriadas
     
     Args:
         json_data (dict): Dados do JSON com as faturas organizadas
         page: Instância da página do Playwright
+        force (bool): Se True, reprocessa faturas com erro
     """
     try:
         geradora = json_data.get("geradora")
@@ -150,11 +152,19 @@ def processar_faturas_do_json(json_data, page):
         print(f"Processando geradora: {geradora}")
         print(f"Total de UCs: {len(lista_ucs)}")
         
+        db = DatabaseManager()
         resultados = []
         primeira_fatura_processada = False
         
         for nova_uc, faturas in lista_ucs.items():
             print(f"\n--- Processando UC: {nova_uc} ---")
+            
+            # Estatísticas da UC
+            uc_inicio = datetime.now()
+            total_faturas_uc = len(faturas)
+            faturas_sucesso_uc = 0
+            faturas_erro_uc = 0
+            faturas_puladas_uc = 0
             
             for fatura in faturas:
                 fatura_id = fatura.get("id")
@@ -163,65 +173,108 @@ def processar_faturas_do_json(json_data, page):
                 
                 print(f"Processando fatura ID: {fatura_id}, Mês: {mes_referencia}, Tarefa: {tarefa}")
                 
+                # Verificar status no banco de dados
+                status_db, deve_processar = db.verificar_status_fatura(fatura_id, force=force)
+                
+                if not deve_processar:
+                    if status_db == 'sucesso':
+                        print(f"   ⏭️ Fatura ID {fatura_id} já processada com SUCESSO - pulando")
+                    elif status_db == 'erro':
+                        print(f"   ⏭️ Fatura ID {fatura_id} com ERRO anterior - pulando (use --force para reprocessar)")
+                    
+                    faturas_puladas_uc += 1
+                    resultados.append({
+                        "id": fatura_id,
+                        "uc": nova_uc,
+                        "mes": mes_referencia,
+                        "tarefa": tarefa,
+                        "sucesso": False,
+                        "pulada": True,
+                        "motivo": status_db
+                    })
+                    continue
+                
                 # Determinar se é a primeira fatura da geradora
                 eh_primeira_fatura = not primeira_fatura_processada
                 
-                if tarefa == "fatura_pendente":
-                    resultado = executar_fatura_pendente(nova_uc, mes_referencia, page, fatura_id, eh_primeira_fatura)
+                # Variável para armazenar resultado
+                resultado = False
+                
+                try:
+                    if tarefa == "fatura_pendente":
+                        resultado = executar_fatura_pendente(nova_uc, mes_referencia, page, fatura_id, eh_primeira_fatura)
+                        
+                    elif tarefa == "fatura_vencida":
+                        resultado = executar_fatura_vencida(nova_uc, mes_referencia, page, fatura_id, fatura, eh_primeira_fatura)
+                        
+                    elif tarefa == "fatura_a_vencer":
+                        # Usar a função de fatura vencida para faturas a vencer (com verificação de mudanças)
+                        resultado = executar_fatura_vencida(nova_uc, mes_referencia, page, fatura_id, fatura, eh_primeira_fatura)
+                    
+                    elif tarefa == "fatura_agendado":
+                        # Processar fatura agendada - verificar se foi paga
+                        resultado = executar_fatura_agendada(nova_uc, mes_referencia, page, fatura_id, fatura, eh_primeira_fatura)
+                    
+                    else:
+                        print(f"⚠️ Tarefa desconhecida: {tarefa}")
+                        resultado = False
+                    
+                    # Atualizar status no banco de dados
+                    if resultado:
+                        db.atualizar_status_fatura(fatura_id, 'sucesso')
+                        faturas_sucesso_uc += 1
+                    else:
+                        db.atualizar_status_fatura(fatura_id, 'erro', mensagem_erro=f"Falha ao processar {tarefa}")
+                        faturas_erro_uc += 1
+                    
                     resultados.append({
                         "id": fatura_id,
                         "uc": nova_uc,
                         "mes": mes_referencia,
                         "tarefa": tarefa,
-                        "sucesso": resultado
+                        "sucesso": resultado,
+                        "pulada": False
                     })
                     
-                elif tarefa == "fatura_vencida":
-                    resultado = executar_fatura_vencida(nova_uc, mes_referencia, page, fatura_id, fatura, eh_primeira_fatura)
-                    resultados.append({
-                        "id": fatura_id,
-                        "uc": nova_uc,
-                        "mes": mes_referencia,
-                        "tarefa": tarefa,
-                        "sucesso": resultado
-                    })
+                except Exception as e_fatura:
+                    print(f"❌ Exceção ao processar fatura ID {fatura_id}: {str(e_fatura)}")
+                    db.atualizar_status_fatura(fatura_id, 'erro', mensagem_erro=str(e_fatura))
+                    faturas_erro_uc += 1
                     
-                elif tarefa == "fatura_a_vencer":
-                    # Usar a função de fatura vencida para faturas a vencer (com verificação de mudanças)
-                    resultado = executar_fatura_vencida(nova_uc, mes_referencia, page, fatura_id, fatura, eh_primeira_fatura)
                     resultados.append({
                         "id": fatura_id,
                         "uc": nova_uc,
                         "mes": mes_referencia,
                         "tarefa": tarefa,
-                        "sucesso": resultado
+                        "sucesso": False,
+                        "pulada": False,
+                        "erro": str(e_fatura)
                     })
-                
-                elif tarefa == "fatura_agendado":
-                    # Processar fatura agendada - verificar se foi paga
-                    resultado = executar_fatura_agendada(nova_uc, mes_referencia, page, fatura_id, fatura, eh_primeira_fatura)
-                    resultados.append({
-                        "id": fatura_id,
-                        "uc": nova_uc,
-                        "mes": mes_referencia,
-                        "tarefa": tarefa,
-                        "sucesso": resultado
-                    })
-                
-                else:
-                    print(f"⚠️ Tarefa desconhecida: {tarefa}")
                 
                 # Marcar que já processamos a primeira fatura (independente do sucesso)
                 if not primeira_fatura_processada:
                     primeira_fatura_processada = True
+            
+            # Registrar execução da UC no banco
+            db.registrar_execucao_uc(
+                cnpj_geradora=geradora,
+                nova_uc=nova_uc,
+                total_faturas=total_faturas_uc,
+                faturas_sucesso=faturas_sucesso_uc,
+                faturas_erro=faturas_erro_uc,
+                faturas_puladas=faturas_puladas_uc,
+                data_hora_inicio=uc_inicio
+            )
         
         # Resumo dos resultados
-        sucessos = sum(1 for r in resultados if r["sucesso"])
+        sucessos = sum(1 for r in resultados if r.get("sucesso"))
+        puladas = sum(1 for r in resultados if r.get("pulada"))
         total = len(resultados)
         print(f"\n📊 Resumo do processamento:")
-        print(f"Total de faturas processadas: {total}")
-        print(f"Sucessos: {sucessos}")
-        print(f"Falhas: {total - sucessos}")
+        print(f"Total de faturas: {total}")
+        print(f"Processadas com sucesso: {sucessos}")
+        print(f"Puladas: {puladas}")
+        print(f"Falhas: {total - sucessos - puladas}")
         
         return resultados
         

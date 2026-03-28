@@ -6,6 +6,7 @@ from geradoras import (
     USINA_LUNA_CNPJ, USINA_SULINA_CNPJ, USINA_LB_CNPJ, 
     USINA_ENERGIAA_CNPJ, USINA_LUZDIVINA_CNPJ, USINA_G114_CNPJ, USINA_SLLG
 )
+from database import DatabaseManager
 
 debug_mode = DEBUG_MODE
 
@@ -86,6 +87,7 @@ def salvar_json_por_geradora(geradoras_organizadas, diretorio="media/json"):
         return ''.join(filter(str.isdigit, cnpj))
     
     arquivos_salvos = []
+    db = DatabaseManager()
     
     for cnpj_geradora, dados_geradora in geradoras_organizadas.items():
         # Usar apenas os números do CNPJ como nome do arquivo
@@ -96,6 +98,25 @@ def salvar_json_por_geradora(geradoras_organizadas, diretorio="media/json"):
         # Contar total de faturas para esta geradora
         total_faturas = sum(len(faturas_uc) for faturas_uc in dados_geradora["lista_ucs"].values())
         
+        # Inserir/atualizar faturas no banco de dados
+        print(f"💾 Salvando faturas da geradora {cnpj_geradora} no banco de dados...")
+        faturas_inseridas = 0
+        
+        for nova_uc, faturas in dados_geradora["lista_ucs"].items():
+            for fatura in faturas:
+                fatura_db = {
+                    'id': fatura.get('id'),
+                    'nova_uc': nova_uc,
+                    'mes_referencia': fatura.get('data_referencia'),
+                    'cnpj_geradora': cnpj_geradora
+                }
+                
+                if db.inserir_ou_atualizar_fatura(fatura_db):
+                    faturas_inseridas += 1
+        
+        print(f"   ✅ {faturas_inseridas} faturas processadas no banco de dados")
+        
+        # Salvar JSON completo (todas as faturas da API)
         with open(caminho_arquivo, "w", encoding="utf-8") as json_file:
             json.dump(dados_geradora, json_file, indent=4, ensure_ascii=False)
         
@@ -103,6 +124,80 @@ def salvar_json_por_geradora(geradoras_organizadas, diretorio="media/json"):
         arquivos_salvos.append(caminho_arquivo)
     
     return arquivos_salvos
+
+def criar_json_filtrado_por_status(cnpj_geradora, force=False, diretorio="media/json"):
+    """
+    Cria um JSON filtrado apenas com faturas que devem ser processadas
+    BASEADO nas faturas que vieram da API (não todas do banco)
+    
+    Args:
+        cnpj_geradora (str): CNPJ da geradora
+        force (bool): Se True, inclui faturas com erro
+        diretorio (str): Diretório dos JSONs
+    
+    Returns:
+        dict: JSON filtrado ou None se não houver faturas para processar
+    """
+    def extrair_numeros_cnpj(cnpj):
+        """Extrai apenas os números do CNPJ"""
+        return ''.join(filter(str.isdigit, cnpj))
+    
+    # Carregar JSON completo (faturas que vieram da API)
+    nome_arquivo_numerico = extrair_numeros_cnpj(cnpj_geradora)
+    caminho_arquivo = os.path.join(diretorio, f"{nome_arquivo_numerico}.json")
+    
+    if not os.path.exists(caminho_arquivo):
+        print(f"❌ Arquivo JSON não encontrado: {caminho_arquivo}")
+        return None
+    
+    try:
+        with open(caminho_arquivo, 'r', encoding='utf-8') as file:
+            dados_completos = json.load(file)
+    except Exception as e:
+        print(f"❌ Erro ao carregar JSON: {str(e)}")
+        return None
+    
+    # Filtrar faturas por status no banco
+    # IMPORTANTE: Só verifica as faturas que VIERAM DA API (no JSON)
+    db = DatabaseManager()
+    lista_ucs_filtradas = {}
+    total_faturas_api = 0
+    total_faturas_filtradas = 0
+    
+    print(f"🔍 Filtrando faturas da geradora {cnpj_geradora}...")
+    print(f"   📡 Verificando apenas faturas que vieram da API (não todas do banco)")
+    
+    for uc, faturas in dados_completos.get("lista_ucs", {}).items():
+        total_faturas_api += len(faturas)
+        faturas_para_processar = []
+        
+        for fatura in faturas:
+            fatura_id = fatura.get("id")
+            status, deve_processar = db.verificar_status_fatura(fatura_id, force=force)
+            
+            if deve_processar:
+                faturas_para_processar.append(fatura)
+        
+        # Só adiciona a UC se tiver faturas para processar
+        if faturas_para_processar:
+            lista_ucs_filtradas[uc] = faturas_para_processar
+            total_faturas_filtradas += len(faturas_para_processar)
+    
+    print(f"   📊 Total de faturas na API: {total_faturas_api}")
+    print(f"   📊 Faturas a processar: {total_faturas_filtradas}")
+    print(f"   📊 Faturas puladas: {total_faturas_api - total_faturas_filtradas}")
+    print(f"   📋 UCs com faturas pendentes: {len(lista_ucs_filtradas)}/{len(dados_completos.get('lista_ucs', {}))}")
+    
+    if not lista_ucs_filtradas:
+        return None
+    
+    # Criar JSON filtrado
+    dados_filtrados = {
+        "geradora": cnpj_geradora,
+        "lista_ucs": lista_ucs_filtradas
+    }
+    
+    return dados_filtrados
 
 def buscar_faturas():
     """Função principal para buscar e organizar faturas"""

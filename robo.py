@@ -16,6 +16,7 @@ from geradoras import (
 )
 from function.tarefa import executar_fatura_pendente, executar_fatura_vencida, processar_faturas_do_json
 from function.buscar_dados_api import buscar_faturas
+from database import DatabaseManager, inicializar_banco
 import json
 import os
 
@@ -215,23 +216,34 @@ def carregar_json_geradora(geradora_cnpj):
         print(f"❌ Erro ao carregar JSON {caminho_json}: {str(e)}")
         return None
 
-def processar_geradora(geradora_cnpj):
-    """Processa uma geradora específica usando seu CNPJ"""
+def processar_geradora(geradora_cnpj, force=False):
+    """Processa uma geradora específica usando seu CNPJ
+    
+    Args:
+        geradora_cnpj (str): CNPJ da geradora
+        force (bool): Se True, reprocessa faturas com erro
+    """
     print(f"Processando geradora com CNPJ: {geradora_cnpj}")
+    if force:
+        print("⚠️ Modo FORCE ativado - faturas com erro serão reprocessadas")
 
-    # 1. Carregar dados do JSON da geradora
-    dados_geradora = carregar_json_geradora(geradora_cnpj)
+    # 1. Criar JSON filtrado apenas com faturas a_verificar (ou com erro se force=True)
+    from function.buscar_dados_api import criar_json_filtrado_por_status
+    
+    dados_geradora = criar_json_filtrado_por_status(geradora_cnpj, force=force)
+    
     if not dados_geradora:
-        print(f"❌ Não foi possível carregar dados da geradora {geradora_cnpj}")
-        return False
+        print(f"✅ Nenhuma fatura pendente para processar na geradora {geradora_cnpj}")
+        return True
 
-    # 2. Extrair lista de UCs e suas tarefas
+    # 2. Extrair lista de UCs filtradas
     lista_ucs = dados_geradora.get("lista_ucs", {})
-    if not lista_ucs:
-        print(f"❌ Nenhuma UC encontrada para a geradora {geradora_cnpj}")
-        return False
-
-    print(f"📋 Encontradas {len(lista_ucs)} UCs para processar")
+    
+    total_ucs = len(lista_ucs)
+    total_faturas = sum(len(f) for f in lista_ucs.values())
+    
+    print(f"📋 UCs a processar: {total_ucs}")
+    print(f"📊 Faturas a processar: {total_faturas}")
 
     # 3. Iniciar processo de login e navegação
     with sync_playwright() as p:
@@ -449,6 +461,33 @@ def processar_geradora(geradora_cnpj):
                     # Verifica se é UC sem faturas
                     if page.locator('text=Bem-vindo à esta nova conta com a Energisa.').count() > 0:
                         print("UC sem faturas geradas no momento.")
+                        
+                        # Registrar no banco que a UC foi verificada mas não tem faturas
+                        from database import DatabaseManager
+                        from datetime import datetime
+                        db = DatabaseManager()
+                        
+                        # Registrar execução da UC sem faturas
+                        db.registrar_execucao_uc(
+                            cnpj_geradora=geradora_cnpj,
+                            nova_uc=nova_uc,
+                            total_faturas=len(faturas_uc),
+                            faturas_sucesso=0,
+                            faturas_erro=0,
+                            faturas_puladas=len(faturas_uc),
+                            data_hora_inicio=datetime.now()
+                        )
+                        
+                        # Marcar todas as faturas desta UC como sucesso (não há nada para processar)
+                        for fatura in faturas_uc:
+                            fatura_id = fatura.get("id")
+                            db.atualizar_status_fatura(
+                                fatura_id=fatura_id,
+                                status='sucesso',
+                                mensagem_erro='UC sem faturas no portal'
+                            )
+                            print(f"   ✅ Fatura ID {fatura_id} marcada como sucesso (UC sem faturas)")
+                        
                         uc_processada_com_sucesso = True  # Marcar como sucesso para prosseguir
                         break
 
@@ -463,8 +502,8 @@ def processar_geradora(geradora_cnpj):
                         "lista_ucs": {nova_uc: faturas_uc}
                     }
 
-                    # Processar faturas da UC atual
-                    resultados_uc = processar_faturas_do_json(dados_uc_temp, page)
+                    # Processar faturas da UC atual com parâmetro force
+                    resultados_uc = processar_faturas_do_json(dados_uc_temp, page, force=force)
 
                     # Log dos resultados
                     sucessos_uc = sum(1 for r in resultados_uc if r["sucesso"])
@@ -511,9 +550,16 @@ def processar_geradora(geradora_cnpj):
         return True
 
 
-def processar_multiplas_geradoras(cnpjs_lista):
-    """Processa uma lista específica de geradoras pelos CNPJs"""
+def processar_multiplas_geradoras(cnpjs_lista, force=False):
+    """Processa uma lista específica de geradoras pelos CNPJs
+    
+    Args:
+        cnpjs_lista (list): Lista de CNPJs para processar
+        force (bool): Se True, reprocessa faturas com erro
+    """
     print(f"🚀 Iniciando processamento de {len(cnpjs_lista)} geradoras específicas")
+    if force:
+        print("⚠️ Modo FORCE ativado - faturas com erro serão reprocessadas")
     
     # Primeiro, buscar dados atualizados da API
     print("📡 Buscando dados atualizados da API...")
@@ -529,7 +575,7 @@ def processar_multiplas_geradoras(cnpjs_lista):
     for i, geradora_cnpj in enumerate(cnpjs_lista, 1):
         print(f"\n🔄 Processando geradora {i}/{len(cnpjs_lista)}: {geradora_cnpj}")
         try:
-            resultado = processar_geradora(geradora_cnpj)
+            resultado = processar_geradora(geradora_cnpj, force=force)
             if resultado:
                 sucessos += 1
                 print(f"✅ SUCESSO: Geradora {geradora_cnpj} processada com sucesso")
@@ -552,9 +598,15 @@ def processar_multiplas_geradoras(cnpjs_lista):
     
     return sucessos > 0
 
-def processar_todas_geradoras():
-    """Processa todas as geradoras da lista"""
+def processar_todas_geradoras(force=False):
+    """Processa todas as geradoras da lista
+    
+    Args:
+        force (bool): Se True, reprocessa faturas com erro
+    """
     print(f"🚀 Iniciando processamento de {len(geradoras_cnpjs)} geradoras")
+    if force:
+        print("⚠️ Modo FORCE ativado - faturas com erro serão reprocessadas")
     
     # Primeiro, buscar dados atualizados da API
     print("📡 Buscando dados atualizados da API...")
@@ -570,7 +622,7 @@ def processar_todas_geradoras():
     for i, geradora_cnpj in enumerate(geradoras_cnpjs, 1):
         print(f"\n🔄 Processando geradora {i}/{len(geradoras_cnpjs)}: {geradora_cnpj}")
         try:
-            resultado = processar_geradora(geradora_cnpj)
+            resultado = processar_geradora(geradora_cnpj, force=force)
             if resultado:
                 sucessos += 1
                 print(f"✅ SUCESSO: Geradora {geradora_cnpj} processada com sucesso")
@@ -593,9 +645,16 @@ def processar_todas_geradoras():
     
     return sucessos > 0
 
-def processar_geradora_especifica(geradora_cnpj):
-    """Processa uma única geradora específica"""
+def processar_geradora_especifica(geradora_cnpj, force=False):
+    """Processa uma única geradora específica
+    
+    Args:
+        geradora_cnpj (str): CNPJ da geradora
+        force (bool): Se True, reprocessa faturas com erro
+    """
     print(f"🎯 Processamento específico da geradora: {geradora_cnpj}")
+    if force:
+        print("⚠️ Modo FORCE ativado - faturas com erro serão reprocessadas")
     
     # Primeiro, buscar dados atualizados da API
     print("📡 Buscando dados atualizados da API...")
@@ -606,7 +665,7 @@ def processar_geradora_especifica(geradora_cnpj):
         return False
     
     try:
-        resultado = processar_geradora(geradora_cnpj)
+        resultado = processar_geradora(geradora_cnpj, force=force)
         if resultado:
             print(f"✅ SUCESSO: Geradora {geradora_cnpj} processada com sucesso")
             return True
@@ -618,22 +677,28 @@ def processar_geradora_especifica(geradora_cnpj):
         return False
 
 if __name__ == "__main__":
+    # Verificar se foi passado o parâmetro --force
+    import sys
+    force_mode = '--force' in sys.argv
+    
+    # Inicializar banco de dados
+    print("💾 Inicializando banco de dados...")
+    inicializar_banco()
+    
     # Iniciar sistema de logging
     log_duplo = iniciar_log()
     
     try:
-        # # Processar todas as geradoras em loop
-        # print("🚀 Iniciando processamento de todas as geradoras...")
-        # processar_todas_geradoras()
+        # Processar todas as geradoras em loop
+        print("🚀 Iniciando processamento de todas as geradoras...")
+        processar_todas_geradoras(force=force_mode)
         
-        # Para processar geradoras específicas:
-        processar_usinas = [
-            USINA_ENERGIAA_CNPJ,
-            USINA_LUZDIVINA_CNPJ,
-            USINA_G114_CNPJ
-        ]
-        print(f"🚀 Iniciando processamento das usinas {processar_usinas}...")
-        processar_multiplas_geradoras(processar_usinas)
+        # # Para processar geradoras específicas:
+        # processar_usinas = [
+        #     USINA_ENERGIAA_CNPJ
+        # ]
+        # print(f"🚀 Iniciando processamento das usinas {processar_usinas}...")
+        # processar_multiplas_geradoras(processar_usinas, force=force_mode)
         
         print("=" * 80)
         print(f"✅ Execução finalizada com sucesso!")

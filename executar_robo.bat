@@ -28,7 +28,7 @@ echo Ambiente virtual ativado com sucesso!
 
 REM Executar o script Python
 echo Executando robo.py...
-python robo.py
+python robo.py %*
 
 REM Capturar código de saída
 set EXIT_CODE=%errorlevel%
