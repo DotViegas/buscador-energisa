@@ -2,7 +2,7 @@ from playwright.sync_api import sync_playwright
 import time
 import re
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from function.codigo_sms import obter_codigo_email, obter_codigo_email_com_reenvio_automatico
 from geradoras import (
@@ -12,7 +12,8 @@ from geradoras import (
     USINA_ENERGIAA_CNPJ,
     USINA_LUZDIVINA_CNPJ,
     USINA_G114_CNPJ,
-    USINA_SLLG
+    USINA_SLLG,
+    USINA_EVIC_CNPJ
 )
 from function.tarefa import executar_fatura_pendente, executar_fatura_vencida, processar_faturas_do_json
 from function.buscar_dados_api import buscar_faturas
@@ -28,7 +29,8 @@ geradoras_cnpjs = [
     USINA_ENERGIAA_CNPJ,
     USINA_LUZDIVINA_CNPJ,
     USINA_G114_CNPJ,
-    USINA_SLLG
+    USINA_SLLG,
+    USINA_EVIC_CNPJ
 ]
 
 class LogDuplo:
@@ -111,46 +113,50 @@ def fazer_login(p, geradora_cnpj):
     """Realiza o processo de login e retorna browser, context e page"""
     print("🔐 Iniciando processo de Login")
     
-    # Usar Chromium como padrão
-    print("🌐 Iniciando Chromium...")
-    browser = p.chromium.launch(
-        headless=False,
-        args=[
-            '--disable-blink-features=AutomationControlled',
-            '--disable-dev-shm-usage',
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-web-security',
-            '--disable-features=IsolateOrigins,site-per-process'
-        ]
-    )
+    browser = None
+    context = None
+    page = None
     
-    context = browser.new_context(
-        viewport={'width': 1280, 'height': 720},
-        locale='pt-BR',
-        timezone_id='America/Sao_Paulo',
-        permissions=['geolocation']
-    )
-    
-    # Adicionar script para mascarar automação
-    page = context.new_page()
-    page.add_init_script("""
-        Object.defineProperty(navigator, 'webdriver', {
-            get: () => undefined
-        });
-        Object.defineProperty(navigator, 'plugins', {
-            get: () => [1, 2, 3, 4, 5]
-        });
-        Object.defineProperty(navigator, 'languages', {
-            get: () => ['pt-BR', 'pt', 'en-US', 'en']
-        });
-        window.chrome = {
-            runtime: {}
-        };
-    """)
-    
-    print("🌐 Navegando para página de login...")
     try:
+        # Usar Chromium como padrão
+        print("🌐 Iniciando Chromium...")
+        browser = p.chromium.launch(
+            headless=False,
+            args=[
+                '--disable-blink-features=AutomationControlled',
+                '--disable-dev-shm-usage',
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-web-security',
+                '--disable-features=IsolateOrigins,site-per-process'
+            ]
+        )
+        
+        context = browser.new_context(
+            viewport={'width': 1280, 'height': 720},
+            locale='pt-BR',
+            timezone_id='America/Sao_Paulo',
+            permissions=['geolocation']
+        )
+        
+        # Adicionar script para mascarar automação
+        page = context.new_page()
+        page.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined
+            });
+            Object.defineProperty(navigator, 'plugins', {
+                get: () => [1, 2, 3, 4, 5]
+            });
+            Object.defineProperty(navigator, 'languages', {
+                get: () => ['pt-BR', 'pt', 'en-US', 'en']
+            });
+            window.chrome = {
+                runtime: {}
+            };
+        """)
+        
+        print("🌐 Navegando para página de login...")
         page.goto("https://servicos.energisa.com.br/login", wait_until="load", timeout=60000)
         time.sleep(5)  # Aguardar carregamento completo e possíveis scripts
         
@@ -158,25 +164,22 @@ def fazer_login(p, geradora_cnpj):
         page.screenshot(path="debug_login.png")
         print("📸 Screenshot salvo: debug_login.png")
         
-    except Exception as e:
-        print(f"⚠️ Erro ao carregar página: {e}")
-        page.screenshot(path="debug_erro.png")
-        print("📸 Screenshot de erro salvo: debug_erro.png")
-    
-    # Selecionar campo de CNPJ
-    print("✏️ Preenchendo CNPJ...")
-    page.get_by_role("textbox", name="Digite o seu CPF ou CNPJ").click()
-    page.get_by_role("textbox", name="Digite o seu CPF ou CNPJ").fill(geradora_cnpj)
-    page.get_by_role("button", name="Entrar").click()
-    
-    # Aguardar seleção de telefone aparecer
-    page.wait_for_selector("button:has-text('67')", timeout=30000)
-    page.get_by_role("button", name="ícone de um celular azul 67*****2038").click()
-    
-    # Aguardar código SMS
-    codigo = obter_codigo_email_com_reenvio_automatico(page, 600)
-    
-    if codigo:
+        # Selecionar campo de CNPJ
+        print("✏️ Preenchendo CNPJ...")
+        page.get_by_role("textbox", name="Digite o seu CPF ou CNPJ").click()
+        page.get_by_role("textbox", name="Digite o seu CPF ou CNPJ").fill(geradora_cnpj)
+        page.get_by_role("button", name="Entrar").click()
+        
+        # Aguardar seleção de telefone aparecer
+        page.wait_for_selector("button:has-text('67')", timeout=30000)
+        page.get_by_role("button", name="ícone de um celular azul 67*****2038").click()
+        
+        # Aguardar código SMS
+        codigo = obter_codigo_email_com_reenvio_automatico(page, 600)
+        
+        if not codigo:
+            raise Exception("Não foi possível obter o código de verificação")
+        
         # Separar o código em 4 dígitos
         input1 = codigo[0] if len(codigo) > 0 else ""
         print(f"Input 1 bloco: {input1}")
@@ -200,13 +203,75 @@ def fazer_login(p, geradora_cnpj):
         page.get_by_role("textbox", name="Dígito 4 do código").fill(input4)
 
         time.sleep(10)
-    else:
-        print("❌ ERRO: Não foi possível obter o código de verificação")
-        browser.close()
-        return None, None, None
+        
+        print("✅ Login feito com sucesso!")
+        return browser, context, page
+        
+    except Exception as e:
+        # Em caso de erro, fechar o navegador antes de propagar a exceção
+        print(f"❌ Erro durante login: {str(e)}")
+        if browser:
+            try:
+                browser.close()
+                print("🔒 Navegador fechado devido ao erro")
+            except:
+                pass
+        raise  # Re-lançar a exceção para ser tratada pelo retry
 
-    print("✅ Login feito com sucesso!")
-    return browser, context, page
+def fazer_login_com_retry(p, geradora_cnpj):
+    """Wrapper que tenta fazer login infinitamente com intervalo de 15 minutos entre falhas
+    
+    Args:
+        p: Playwright instance
+        geradora_cnpj: CNPJ da geradora
+    
+    Returns:
+        browser, context, page (sempre retorna valores válidos, nunca None)
+    """
+    tentativa = 0
+    
+    while True:
+        tentativa += 1
+        print(f"\n{'='*80}")
+        print(f"🔐 TENTATIVA DE LOGIN #{tentativa}")
+        print(f"🕐 Horário: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
+        print(f"{'='*80}\n")
+        
+        try:
+            browser, context, page = fazer_login(p, geradora_cnpj)
+            
+            if browser and context and page:
+                print("✅ Login realizado com sucesso!")
+                return browser, context, page
+            else:
+                raise Exception("Login retornou valores None")
+                
+        except Exception as e:
+            print(f"\n❌ FALHA NO LOGIN (tentativa {tentativa})")
+            print(f"📝 Erro: {str(e)}")
+            
+            # Fechar browser se foi aberto
+            try:
+                if 'browser' in locals() and browser:
+                    browser.close()
+                    print("🔒 Browser fechado")
+            except:
+                pass
+            
+            # Aguardar 15 minutos
+            tempo_espera = 15 * 60  # 15 minutos em segundos
+            proxima_tentativa = datetime.now() + timedelta(seconds=tempo_espera)
+            
+            print(f"\n⏳ Aguardando 15 minutos antes da próxima tentativa...")
+            print(f"🕐 Próxima tentativa às: {proxima_tentativa.strftime('%d/%m/%Y %H:%M:%S')}")
+            print(f"{'='*80}\n")
+            
+            # Countdown com atualização a cada minuto
+            for minutos_restantes in range(15, 0, -1):
+                print(f"⏰ {minutos_restantes} minuto(s) restante(s)...")
+                time.sleep(60)
+            
+            print("\n🔄 Reiniciando tentativa de login...\n")
 
 def carregar_json_geradora(geradora_cnpj):
     """Carrega o JSON correspondente à geradora usando apenas os números do CNPJ"""
@@ -260,8 +325,8 @@ def processar_geradora(geradora_cnpj, force=False):
 
     # 3. Iniciar processo de login e navegação
     with sync_playwright() as p:
-        # Fazer login inicial
-        browser, context, page = fazer_login(p, geradora_cnpj)
+        # Fazer login inicial com retry automático
+        browser, context, page = fazer_login_com_retry(p, geradora_cnpj)
 
         if not browser or not page:
             print("❌ Falha no login inicial")
@@ -289,12 +354,8 @@ def processar_geradora(geradora_cnpj, force=False):
                     pass
                 
                 time.sleep(3)
-                print("🔐 Fazendo novo login...")
-                browser, context, page = fazer_login(p, geradora_cnpj)
-                
-                if not browser or not page:
-                    print("❌ Falha ao renovar login. Abortando processamento.")
-                    return False
+                print("🔐 Fazendo novo login com retry automático...")
+                browser, context, page = fazer_login_com_retry(p, geradora_cnpj)
                 
                 print("✅ Login renovado com sucesso! Continuando processamento...")
 
