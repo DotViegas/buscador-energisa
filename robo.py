@@ -259,7 +259,7 @@ def fazer_login_com_retry(p, geradora_cnpj):
                 pass
             
             # Aguardar 15 minutos
-            tempo_espera = 15 * 60  # 15 minutos em segundos
+            tempo_espera = 30 * 60  # 15 minutos em segundos
             proxima_tentativa = datetime.now() + timedelta(seconds=tempo_espera)
             
             print(f"\n⏳ Aguardando 15 minutos antes da próxima tentativa...")
@@ -267,7 +267,7 @@ def fazer_login_com_retry(p, geradora_cnpj):
             print(f"{'='*80}\n")
             
             # Countdown com atualização a cada minuto
-            for minutos_restantes in range(15, 0, -1):
+            for minutos_restantes in range(30, 0, -1):
                 print(f"⏰ {minutos_restantes} minuto(s) restante(s)...")
                 time.sleep(60)
             
@@ -744,7 +744,7 @@ if __name__ == "__main__":
         
         # # Para processar geradoras específicas:
         # processar_usinas = [
-        #     USINA_ENERGIAA_CNPJ
+        #     USINA_SULINA_CNPJ
         # ]
         # print(f"🚀 Iniciando processamento das usinas {processar_usinas}...")
         # processar_multiplas_geradoras(processar_usinas, force=force_mode)
