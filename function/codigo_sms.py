@@ -14,8 +14,12 @@ def obter_codigo_email():
         mail.login(EMAIL_LOGIN, EMAIL_PASSWORD)
         mail.select("inbox")
         
-        # Buscar emails com o assunto específico
-        _, messages = mail.search(None, 'SUBJECT "BuscaSMSEnergisa - SMS do 5204809 (Energisa)"')
+        # Buscar emails com qualquer um dos assuntos aceitos (5204809 ou 28115)
+        _, messages = mail.search(
+            None,
+            'OR SUBJECT "BuscaSMSEnergisa - SMS do 5204809 (Energisa)" '
+            'SUBJECT "BuscaSMSEnergisa - SMS da Energisa (28115)"'
+        )
         
         if not messages[0]:
             return None

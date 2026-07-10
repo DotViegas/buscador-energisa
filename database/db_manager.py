@@ -85,11 +85,11 @@ class DatabaseManager:
     def verificar_status_fatura(self, fatura_id: int, force: bool = False) -> Tuple[str, bool]:
         """
         Verifica o status de uma fatura e determina se deve ser processada
-        
+
         Args:
             fatura_id (int): ID da fatura
-            force (bool): Se True, permite reprocessar faturas com erro
-        
+            force (bool): Se True, permite reprocessar faturas com erro no mesmo dia
+
         Returns:
             tuple: (status, deve_processar)
                 - status: 'a_verificar', 'sucesso', 'erro', 'nao_encontrada'
@@ -98,27 +98,40 @@ class DatabaseManager:
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
-            
+
             cursor.execute("""
-                SELECT status, tentativas FROM faturas WHERE id = ?
+                SELECT status, tentativas, data_processamento FROM faturas WHERE id = ?
             """, (fatura_id,))
-            
+
             resultado = cursor.fetchone()
             conn.close()
-            
+
             if not resultado:
                 return ('nao_encontrada', True)
-            
+
             status = resultado['status']
-            
-            # Regras de processamento
+            data_processamento = resultado['data_processamento']
+
+            # A fatura é considerada "processada hoje" apenas se houve um processamento
+            # cuja data bate com a de hoje. Janela diária baseada no calendário (date.today()),
+            # para que uma nova execução em outro dia possa reprocessar mesmo casos de sucesso/erro
+            # sem precisar apagar o banco.
+            processada_hoje = False
+            if data_processamento:
+                # data_processamento vem como string ('YYYY-MM-DD HH:MM:SS[.ffffff]').
+                # Comparar só pelos 10 primeiros caracteres evita depender da versão do Python
+                # para parsear ISO com espaço no separador.
+                processada_hoje = str(data_processamento)[:10] == date.today().isoformat()
+
             if status == 'sucesso':
-                return (status, False)  # Não reprocessar sucessos
+                return (status, not processada_hoje)
             elif status == 'erro':
-                return (status, force)  # Só reprocessa com --force
+                if processada_hoje:
+                    return (status, force)
+                return (status, True)
             else:  # 'a_verificar'
-                return (status, True)  # Sempre processa
-                
+                return (status, True)
+
         except Exception as e:
             print(f"   ❌ Erro ao verificar status da fatura: {str(e)}")
             return ('erro', False)

@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\João Viegas\\\\Documents\\\\projetos\\\\buscador-energisa\" -Recurse -File)",
+      "Bash(Select-Object FullName)",
+      "Bash(sqlite3 database/faturas.db \".schema\")",
+      "Bash(python -m py_compile database/db_manager.py)",
+      "Bash(python -c \"import sqlite3; from datetime import date; c = sqlite3.connect\\('database/faturas.db'\\); c.row_factory = sqlite3.Row; cur = c.cursor\\(\\); cur.execute\\(\\\\\"SELECT status, COUNT\\(*\\) as qtd, MIN\\(data_processamento\\) as min_dp, MAX\\(data_processamento\\) as max_dp FROM faturas GROUP BY status\\\\\"\\); print\\('Resumo do banco atual:'\\); [print\\(f'  status={r[\\\\\"status\\\\\"]:15s} qtd={r[\\\\\"qtd\\\\\"]:6d} primeiro={r[\\\\\"min_dp\\\\\"]} ultimo={r[\\\\\"max_dp\\\\\"]}'\\) for r in cur.fetchall\\(\\)]; print\\(\\); print\\(f'Data de hoje: {date.today\\(\\).isoformat\\(\\)}'\\); cur.execute\\(\\\\\"SELECT COUNT\\(*\\) as qtd FROM faturas WHERE status='sucesso' AND substr\\(data_processamento,1,10\\) < ?\\\\\", \\(date.today\\(\\).isoformat\\(\\),\\)\\); print\\(f'Sucessos de dias anteriores que voltam a ser elegiveis: {cur.fetchone\\(\\)[\\\\\"qtd\\\\\"]}'\\); cur.execute\\(\\\\\"SELECT COUNT\\(*\\) as qtd FROM faturas WHERE status='erro' AND substr\\(data_processamento,1,10\\) < ?\\\\\", \\(date.today\\(\\).isoformat\\(\\),\\)\\); print\\(f'Erros de dias anteriores que voltam a ser elegiveis: {cur.fetchone\\(\\)[\\\\\"qtd\\\\\"]}'\\); c.close\\(\\)\")",
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\João Viegas\\\\Documents\\\\projetos\\\\buscador-energisa\" -Filter \"*.bat\")",
+      "Read(//c/Users/Jo�o Viegas/Documents/projetos/**)",
+      "Bash(sqlite3 database/faturas.db \"SELECT COUNT\\(*\\) as total_faturas, SUM\\(CASE WHEN status = 'a_verificar' THEN 1 ELSE 0 END\\) as a_verificar, SUM\\(CASE WHEN status = 'sucesso' THEN 1 ELSE 0 END\\) as sucesso, SUM\\(CASE WHEN status = 'erro' THEN 1 ELSE 0 END\\) as erro FROM faturas;\")",
+      "Bash(cat)",
+      "Bash(python /tmp/check_db.py)",
+      "Bash(pip install *)",
+      "Bash(python -m py_compile ea_manager.py)",
+      "Bash(python -c ' *)",
+      "Bash(del preview_painel.txt)"
+    ]
+  }
+}
