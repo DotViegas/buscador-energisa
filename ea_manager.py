@@ -110,16 +110,17 @@ def obter_stats() -> dict:
 OPCOES_MENU = [
     ("1",  "Ativar servidor (scheduler em foreground)"),
     ("2",  "Rodar robô agora (todas as geradoras)"),
-    ("3",  "Rodar robô agora com --force (reprocessar erros)"),
-    ("4",  "Rodar robô para uma geradora específica"),
-    ("5",  "Coletar códigos ANEEL (robo_aneel.py)"),
-    ("6",  "Testar webhook ANEEL"),
-    ("7",  "Status do banco (por status e por geradora)"),
-    ("8",  "Listar execuções do dia"),
-    ("9",  "Listar geradoras cadastradas"),
-    ("10", "Gerar relatório XLSX de hoje"),
-    ("11", "Gerar relatório XLSX por intervalo"),
-    ("12", "Resetar faturas com erro"),
+    ("3",  "Rerrodar o dia inteiro (refaz tudo da API, inclusive sucessos de hoje)"),
+    ("4",  "Rodar robô agora com --force (reprocessar erros)"),
+    ("5",  "Rodar robô para uma geradora específica"),
+    ("6",  "Coletar códigos ANEEL (robo_aneel.py)"),
+    ("7",  "Testar webhook ANEEL"),
+    ("8",  "Status do banco (por status e por geradora)"),
+    ("9",  "Listar execuções do dia"),
+    ("10", "Listar geradoras cadastradas"),
+    ("11", "Gerar relatório XLSX de hoje"),
+    ("12", "Gerar relatório XLSX por intervalo"),
+    ("13", "Resetar faturas com erro"),
     ("0",  "Sair"),
 ]
 
@@ -164,6 +165,8 @@ def renderizar_painel(console: Console) -> None:
     for num, descricao in OPCOES_MENU:
         if num == "1":
             tabela.add_row(num, Text(descricao, style="bold green"))
+        elif num == "3":
+            tabela.add_row(num, Text(descricao, style="bold magenta"))
         elif num == "0":
             tabela.add_row(num, Text(descricao, style="bold red"))
         else:
@@ -181,10 +184,13 @@ def renderizar_painel(console: Console) -> None:
 
 # ==================== AÇÕES: SCHEDULER ====================
 
-def _executar_robo(force: bool = False) -> None:
+def _executar_robo(force: bool = False, reprocessar_tudo: bool = False) -> None:
     """Roda robo.py em subprocess; logs vão direto para o terminal do painel."""
     args = [sys.executable, "robo.py"]
-    if force:
+    if reprocessar_tudo:
+        # Superconjunto de --force: refaz até o que já deu sucesso hoje.
+        args.append("--reprocessar-tudo")
+    elif force:
         args.append("--force")
     subprocess.run(args, cwd=PROJECT_DIR)
 
@@ -260,6 +266,38 @@ def acao_ativar_scheduler(console: Console) -> None:
 def acao_rodar_robo(console: Console) -> None:
     console.print("\n[bold cyan]🚀 Iniciando robo.py (todas as geradoras)...[/bold cyan]\n")
     _executar_robo(force=False)
+
+
+def acao_rerrodar_dia(console: Console) -> None:
+    """Reconsulta a API e refaz TODAS as faturas do dia, inclusive as já baixadas."""
+    stats = obter_stats()
+    console.print(
+        Panel(
+            Text.assemble(
+                ("Consulta a API de novo e reprocessa TODAS as faturas que ela "
+                 "retornar,\nignorando a janela diária.\n\n", "white"),
+                ("Isso inclui as faturas que já foram baixadas com SUCESSO hoje "
+                 "— elas\nserão baixadas de novo.\n\n", "bold yellow"),
+                (f"📊 Processadas hoje até agora: ", "white"),
+                (f"{stats['processadas_hoje']}\n", "bold cyan"),
+                (f"❌ Com erro: ", "white"),
+                (f"{stats['erro']}", "bold red"),
+            ),
+            title="♻️  RERRODAR O DIA INTEIRO",
+            border_style="magenta",
+            padding=(1, 2),
+        )
+    )
+    confirma = input("\nConfirma rerrodar TUDO do dia? (s/n): ").strip().lower()
+    if confirma != "s":
+        console.print("[yellow]Operação cancelada.[/yellow]")
+        return
+
+    console.print(
+        "\n[bold magenta]♻️  Iniciando robo.py --reprocessar-tudo "
+        "(refazendo o dia inteiro)...[/bold magenta]\n"
+    )
+    _executar_robo(reprocessar_tudo=True)
 
 
 def acao_rodar_robo_force(console: Console) -> None:
@@ -691,16 +729,17 @@ def acao_relatorio_intervalo(console: Console) -> None:
 ACOES = {
     "1":  acao_ativar_scheduler,
     "2":  acao_rodar_robo,
-    "3":  acao_rodar_robo_force,
-    "4":  acao_rodar_geradora_especifica,
-    "5":  acao_coletar_aneel,
-    "6":  acao_testar_webhook_aneel,
-    "7":  acao_status_banco,
-    "8":  acao_execucoes_dia,
-    "9":  acao_listar_geradoras,
-    "10": acao_relatorio_hoje,
-    "11": acao_relatorio_intervalo,
-    "12": acao_resetar_erros,
+    "3":  acao_rerrodar_dia,
+    "4":  acao_rodar_robo_force,
+    "5":  acao_rodar_geradora_especifica,
+    "6":  acao_coletar_aneel,
+    "7":  acao_testar_webhook_aneel,
+    "8":  acao_status_banco,
+    "9":  acao_execucoes_dia,
+    "10": acao_listar_geradoras,
+    "11": acao_relatorio_hoje,
+    "12": acao_relatorio_intervalo,
+    "13": acao_resetar_erros,
 }
 
 
