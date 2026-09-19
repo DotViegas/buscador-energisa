@@ -125,7 +125,8 @@ def salvar_json_por_geradora(geradoras_organizadas, diretorio="media/json"):
     
     return arquivos_salvos
 
-def criar_json_filtrado_por_status(cnpj_geradora, force=False, diretorio="media/json"):
+def criar_json_filtrado_por_status(cnpj_geradora, force=False, diretorio="media/json",
+                                   reprocessar_tudo=False):
     """
     Cria um JSON filtrado apenas com faturas que devem ser processadas
     BASEADO nas faturas que vieram da API (não todas do banco)
@@ -134,6 +135,8 @@ def criar_json_filtrado_por_status(cnpj_geradora, force=False, diretorio="media/
         cnpj_geradora (str): CNPJ da geradora
         force (bool): Se True, inclui faturas com erro
         diretorio (str): Diretório dos JSONs
+        reprocessar_tudo (bool): Se True, inclui TODAS as faturas da API, inclusive as
+            que já foram baixadas com sucesso hoje
     
     Returns:
         dict: JSON filtrado ou None se não houver faturas para processar
@@ -166,6 +169,8 @@ def criar_json_filtrado_por_status(cnpj_geradora, force=False, diretorio="media/
     
     print(f"🔍 Filtrando faturas da geradora {cnpj_geradora}...")
     print(f"   📡 Verificando apenas faturas que vieram da API (não todas do banco)")
+    if reprocessar_tudo:
+        print(f"   ♻️ Modo RERRODADA - nenhuma fatura será pulada pela janela diária")
     
     for uc, faturas in dados_completos.get("lista_ucs", {}).items():
         total_faturas_api += len(faturas)
@@ -173,7 +178,9 @@ def criar_json_filtrado_por_status(cnpj_geradora, force=False, diretorio="media/
         
         for fatura in faturas:
             fatura_id = fatura.get("id")
-            status, deve_processar = db.verificar_status_fatura(fatura_id, force=force)
+            status, deve_processar = db.verificar_status_fatura(
+                fatura_id, force=force, reprocessar_tudo=reprocessar_tudo
+            )
             
             if deve_processar:
                 faturas_para_processar.append(fatura)

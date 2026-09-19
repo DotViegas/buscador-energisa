@@ -82,13 +82,16 @@ class DatabaseManager:
             print(f"   ❌ Erro ao inserir/atualizar fatura: {str(e)}")
             return False
     
-    def verificar_status_fatura(self, fatura_id: int, force: bool = False) -> Tuple[str, bool]:
+    def verificar_status_fatura(self, fatura_id: int, force: bool = False,
+                                reprocessar_tudo: bool = False) -> Tuple[str, bool]:
         """
         Verifica o status de uma fatura e determina se deve ser processada
 
         Args:
             fatura_id (int): ID da fatura
             force (bool): Se True, permite reprocessar faturas com erro no mesmo dia
+            reprocessar_tudo (bool): Se True, ignora a janela diária por completo e manda
+                processar qualquer fatura, inclusive as que já deram sucesso hoje
 
         Returns:
             tuple: (status, deve_processar)
@@ -110,6 +113,11 @@ class DatabaseManager:
                 return ('nao_encontrada', True)
 
             status = resultado['status']
+
+            # Rerrodada do dia: nada é pulado, nem sucesso nem erro já processados hoje.
+            if reprocessar_tudo:
+                return (status, True)
+
             data_processamento = resultado['data_processamento']
 
             # A fatura é considerada "processada hoje" apenas se houve um processamento

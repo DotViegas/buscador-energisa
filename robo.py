@@ -1,4 +1,4 @@
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 import time
 import re
 import sys
@@ -20,6 +20,8 @@ from function.buscar_dados_api import buscar_faturas
 from database import DatabaseManager, inicializar_banco
 import json
 import os
+import random
+from config import HUMANIZAR, DELAY_UC_MIN, DELAY_UC_MAX, MINUTOS_ENTRE_TENTATIVAS
 
 # Lista com todos os CNPJs das geradoras
 geradoras_cnpjs = [
@@ -42,6 +44,9 @@ class LogDuplo:
     def write(self, mensagem):
         self.terminal.write(mensagem)
         self.log.write(mensagem)
+        # Grava na hora: sem isso o arquivo só recebe o texto a cada ~8 KB e
+        # parece "parado" no meio de uma UC enquanto o robô espera 30 min.
+        self.flush()
 
     def flush(self):
         self.terminal.flush()
@@ -75,7 +80,7 @@ class AccessDeniedError(Exception):
     """Sinaliza que o portal retornou bloqueio 'Access Denied'.
 
     Em vez de encerrar o robô, esse erro é capturado no laço de
-    processamento para aguardar 15 minutos e tentar novamente.
+    processamento para aguardar (MINUTOS_ENTRE_TENTATIVAS) e tentar novamente.
     """
     pass
 
@@ -98,8 +103,8 @@ def verificar_access_denied(page):
 
     Raises:
         AccessDeniedError: Se Access Denied for detectado. O laço de
-            processamento trata esse erro aguardando 15 minutos e
-            refazendo o login, sem parar o robô.
+            processamento trata esse erro aguardando (MINUTOS_ENTRE_TENTATIVAS)
+            e refazendo o login, sem parar o robô.
     """
     try:
         # Verificar se existe texto "Access Denied" na página
@@ -128,7 +133,7 @@ def verificar_access_denied(page):
         return False
 
 
-def aguardar_antes_de_retentar(minutos=15, motivo="Erro detectado"):
+def aguardar_antes_de_retentar(minutos=MINUTOS_ENTRE_TENTATIVAS, motivo="Erro detectado"):
     """Aguarda (com contagem regressiva) antes de uma nova tentativa.
 
     Usado tanto para bloqueio de acesso quanto para falhas de
@@ -159,6 +164,12 @@ def verificar_sem_correspondencia(page):
     tanto quando a nova_uc está mal cadastrada quanto quando o login deu um
     "sucesso falso" (nenhuma UC carregou). A distinção é feita no laço de
     processamento (1 UC isolada = cadastro errado; 2+ seguidas = login falso).
+
+    Desde 04/09/2026 a listagem sempre mostra as seções "Ativos (N)" e
+    "Inativos (N)", e a seção "Inativos (0)" expandida exibe o MESMO aviso.
+    Por isso este retorno só significa "UC não encontrada" quando não há card
+    da UC na página — quem decide isso é selecionar_card_uc. O aviso precisa
+    estar VISÍVEL: recolhido dentro de "Inativos (0)" ele existe em toda busca.
 
     Returns:
         bool: True se o aviso de "sem correspondência" está visível.
@@ -197,6 +208,154 @@ def marcar_uc_nao_encontrada(geradora_cnpj, nova_uc, faturas_uc):
             print(f"   📝 Fatura ID {fatura_id} marcada como erro (UC não encontrada)")
     except Exception as e:
         print(f"⚠️ Erro ao registrar UC não encontrada {nova_uc}: {str(e)}")
+
+
+# Espera pelo card da UC após digitar a busca (a listagem filtra conforme se
+# digita; o card costuma aparecer em menos de 2 s). 10 s repõe a margem do
+# código antigo (2 s de pausa + 10 s de clique).
+ESPERA_CARD_UC_MS = 10000
+
+# Cabeçalhos-acordeão da listagem. Ancorados em ^ porque o nome acessível de
+# um card é todo o seu texto (número, badge, código, endereço) e "Inativos"
+# sem âncora casaria um card cujo endereço contenha a palavra.
+SECAO_ATIVOS = r"^\s*Ativos"
+SECAO_INATIVOS = r"^\s*Inativos"
+
+
+def _aguardar_visivel(locator, timeout_ms):
+    """True se o locator ficou visível dentro do prazo; False se estourou."""
+    try:
+        locator.wait_for(state="visible", timeout=timeout_ms)
+        return True
+    except PlaywrightTimeoutError:
+        return False
+
+
+def _cabecalho_secao(page, nome):
+    """Botão-acordeão "Ativos (N)"/"Inativos (N)" da listagem de UCs.
+
+    Returns:
+        tuple: (locator do botão ou None se não existir/visível,
+                contagem N ou None se o nome não trouxer "(N)").
+    """
+    botao = page.get_by_role("button", name=re.compile(nome, re.IGNORECASE))
+    if botao.count() == 0 or not botao.first.is_visible():
+        return None, None
+    contagem = re.search(r"\((\d+)\)", botao.first.inner_text())
+    return botao.first, (int(contagem.group(1)) if contagem else None)
+
+
+def _expandir_secao_listagem(page, nome):
+    """Expande a seção "Ativos (N)"/"Inativos (N)" da listagem de UCs, se fizer sentido.
+
+    Uma seção vazia ("Inativos (0)") NÃO é expandida: aberta, ela mostra o
+    mesmo aviso "Não encontramos nenhuma correspondência" da busca sem
+    resultado, que era confundido com UC não encontrada (04/09/2026). Uma
+    seção já expandida (aria-expanded="true") também não: o clique é um
+    toggle e a recolheria. Sem contagem no nome (layout até 03/09, em que
+    "Inativos" só aparecia quando a UC era inativa), expande como antes.
+
+    Returns:
+        bool: True se clicou para expandir.
+    """
+    try:
+        botao, contagem = _cabecalho_secao(page, nome)
+        if botao is None:
+            return False
+        texto = botao.inner_text().strip()
+        if contagem == 0:
+            print(f"   ℹ️ Seção '{texto}' vazia - não expandir")
+            return False
+        if botao.get_attribute("aria-expanded") == "true":
+            print(f"   ℹ️ Seção '{texto}' já está expandida")
+            return False
+        print(f"   ℹ️ Expandindo seção '{texto}'...")
+        botao.click(timeout=5000)
+        _pausa(1)
+        return True
+    except Exception as e:
+        print(f"   ⚠️ Não foi possível expandir a seção {nome}: {str(e)}")
+        return False
+
+
+def _listagem_vazia(page):
+    """True se a listagem tem cabeçalhos de seção e todos marcam "(0)".
+
+    É o sinal de "UC não encontrada" no layout novo mesmo quando o aviso de
+    sem correspondência está recolhido (fora da tela ou fora do DOM).
+    """
+    try:
+        contagens = [c for _, c in (_cabecalho_secao(page, SECAO_ATIVOS),
+                                    _cabecalho_secao(page, SECAO_INATIVOS)) if c is not None]
+        return bool(contagens) and all(c == 0 for c in contagens)
+    except Exception:
+        return False
+
+
+def selecionar_card_uc(page, nova_uc):
+    """Localiza e clica no card da UC na listagem, após a busca ter sido digitada.
+
+    O card é um <button> com "Código do Cliente: 10/<nova_uc>-D". O número é
+    casado ancorado ao rótulo — o texto do card inclui o endereço, que também
+    traz sequências de 6-7 dígitos — e com fronteira de dígito à direita, para
+    386212 não casar 3862127; zeros à esquerda são tolerados. has_text com
+    regex casa o textContent bruto do botão (sem espaço entre elementos e sem
+    normalização) e só aceita as flags I/S/M.
+
+    Ordem: card visível → clica. Senão, expande "Inativos (N)" (UC inativa) e
+    procura de novo; card presente mas oculto → expande "Ativos". Sem nenhum
+    card da UC: aviso de sem correspondência VISÍVEL ou cabeçalhos "(0)"/"(0)"
+    significam UC não encontrada; nada disso, a busca não carregou e o retry
+    da navegação decide.
+
+    Raises:
+        SemCorrespondenciaError: nenhum card da UC e (aviso visível ou listagem vazia).
+        Exception: nenhum card da UC sem esses sinais, ou card apenas oculto.
+    """
+    padrao_uc = re.compile(rf"Código do Cliente:\s*(?:\d+/)?0*{re.escape(nova_uc)}(?!\d)", re.IGNORECASE)
+    cards = page.locator("button").filter(has_text=padrao_uc)  # inclui ocultos
+    card = cards.filter(visible=True)
+
+    if not _aguardar_visivel(card.first, ESPERA_CARD_UC_MS):
+        # UC inativa: o card fica na seção "Inativos (N)", recolhida.
+        if _expandir_secao_listagem(page, SECAO_INATIVOS):
+            _aguardar_visivel(card.first, 5000)
+    if card.count() == 0 and cards.count() > 0:
+        # Card existe mas está oculto: seção "Ativos" recolhida.
+        if _expandir_secao_listagem(page, SECAO_ATIVOS):
+            _aguardar_visivel(card.first, 3000)
+
+    if card.count() > 0:
+        card.first.click(timeout=10000)
+        return
+    if cards.count() > 0:
+        raise Exception(f"Card da UC {nova_uc} existe na listagem mas está oculto (seção recolhida)")
+    if verificar_sem_correspondencia(page) or _listagem_vazia(page):
+        raise SemCorrespondenciaError(nova_uc)
+    raise Exception(f"Card da UC {nova_uc} não apareceu na listagem (sem aviso de 'sem correspondência')")
+
+def _pausa(segundos):
+    """Espera 'segundos' com jitter humano quando HUMANIZAR; senão, fixo."""
+    if HUMANIZAR:
+        time.sleep(random.uniform(segundos * 0.6, segundos * 1.6))
+    else:
+        time.sleep(segundos)
+
+
+def _pausa_entre_ucs():
+    """Pausa aleatória entre UCs — quebra o ritmo de máquina do scraping."""
+    if HUMANIZAR:
+        s = random.uniform(DELAY_UC_MIN, DELAY_UC_MAX)
+        print(f"⏳ Pausa de {s:.1f}s antes da próxima UC...")
+        time.sleep(s)
+
+
+def _digitar(locator, texto):
+    """Digita caractere a caractere com delay humano (quando HUMANIZAR)."""
+    if HUMANIZAR and texto:
+        locator.press_sequentially(texto, delay=random.uniform(60, 160))
+    else:
+        locator.fill(texto)
 
 
 def fazer_login(p, geradora_cnpj):
@@ -248,20 +407,38 @@ def fazer_login(p, geradora_cnpj):
 
         print("🌐 Navegando para página de login...")
         page.goto("https://servicos.energisa.com.br/login", wait_until="load", timeout=60000)
-        time.sleep(5)  # Aguardar carregamento completo e possíveis scripts
+        _pausa(5)  # Aguardar carregamento completo e possíveis scripts (com jitter)
 
         # Tirar screenshot para debug
         page.screenshot(path="debug_login.png")
         print("📸 Screenshot salvo: debug_login.png")
 
-        # Selecionar campo de CNPJ
+        # Selecionar campo de CNPJ (com retry: às vezes o portal volta para a
+        # mesma tela de CPF/CNPJ logo após o "Entrar". Reenviar os mesmos dados
+        # costuma resolver, então tentamos até MAX_TENTATIVAS_CNPJ vezes antes
+        # de deixar cair no retry completo de login.)
         print("✏️ Preenchendo CNPJ...")
-        page.get_by_role("textbox", name="Digite o seu CPF ou CNPJ").click()
-        page.get_by_role("textbox", name="Digite o seu CPF ou CNPJ").fill(geradora_cnpj)
-        page.get_by_role("button", name="Entrar").click()
+        MAX_TENTATIVAS_CNPJ = 2
+        for tentativa_cnpj in range(1, MAX_TENTATIVAS_CNPJ + 1):
+            campo_cnpj = page.get_by_role("textbox", name="Digite o seu CPF ou CNPJ")
+            campo_cnpj.click()
+            _digitar(campo_cnpj, geradora_cnpj)
+            _pausa(0.6)
+            page.get_by_role("button", name="Entrar").click()
 
-        # Aguardar seleção de telefone aparecer
-        page.wait_for_selector("button:has-text('67')", timeout=30000)
+            # Se a seleção de telefone aparecer, o login avançou. Se o portal
+            # voltar para a tela de CPF/CNPJ, esse botão não aparece dentro do
+            # tempo → reenviamos os dados na próxima iteração.
+            try:
+                page.wait_for_selector("button:has-text('67')", timeout=30000)
+                break  # avançou para a seleção de telefone
+            except PlaywrightTimeoutError:
+                if tentativa_cnpj >= MAX_TENTATIVAS_CNPJ:
+                    raise  # esgotou as tentativas → cai no retry completo de login
+                print(f"⚠️ Portal voltou para a tela de CPF/CNPJ. Reenviando "
+                      f"dados (tentativa {tentativa_cnpj + 1}/{MAX_TENTATIVAS_CNPJ})...")
+                _pausa(1)
+
         page.get_by_role("button", name="ícone de um celular azul 67*****2038").click()
 
         # Aguardar código SMS
@@ -283,14 +460,15 @@ def fazer_login(p, geradora_cnpj):
         # Preencher os campos com o código
         page.wait_for_selector("input[type='text']", state="visible", timeout=10000)
 
-        page.get_by_role("textbox", name="Dígito 1 do código").click()
-        page.get_by_role("textbox", name="Dígito 1 do código").fill(input1)
-        page.get_by_role("textbox", name="Dígito 2 do código").click()
-        page.get_by_role("textbox", name="Dígito 2 do código").fill(input2)
-        page.get_by_role("textbox", name="Dígito 3 do código").click()
-        page.get_by_role("textbox", name="Dígito 3 do código").fill(input3)
-        page.get_by_role("textbox", name="Dígito 4 do código").click()
-        page.get_by_role("textbox", name="Dígito 4 do código").fill(input4)
+        for _campo, _valor in [
+            ("Dígito 1 do código", input1),
+            ("Dígito 2 do código", input2),
+            ("Dígito 3 do código", input3),
+            ("Dígito 4 do código", input4),
+        ]:
+            page.get_by_role("textbox", name=_campo).click()
+            page.get_by_role("textbox", name=_campo).fill(_valor)
+            _pausa(0.4)  # hesitação humana entre os dígitos
 
         time.sleep(10)
 
@@ -309,7 +487,7 @@ def fazer_login(p, geradora_cnpj):
         raise  # Re-lançar a exceção para ser tratada pelo retry
 
 def fazer_login_com_retry(p, geradora_cnpj):
-    """Wrapper que tenta fazer login infinitamente com intervalo de 15 minutos entre falhas
+    """Wrapper que tenta fazer login infinitamente com intervalo de MINUTOS_ENTRE_TENTATIVAS entre falhas
 
     Args:
         p: Playwright instance
@@ -348,16 +526,16 @@ def fazer_login_com_retry(p, geradora_cnpj):
             except:
                 pass
 
-            # Aguardar 15 minutos
-            tempo_espera = 15 * 60  # 15 minutos em segundos
+            # Aguardar antes da próxima tentativa
+            tempo_espera = MINUTOS_ENTRE_TENTATIVAS * 60
             proxima_tentativa = datetime.now() + timedelta(seconds=tempo_espera)
 
-            print(f"\n⏳ Aguardando 15 minutos antes da próxima tentativa...")
+            print(f"\n⏳ Aguardando {MINUTOS_ENTRE_TENTATIVAS} minutos antes da próxima tentativa...")
             print(f"🕐 Próxima tentativa às: {proxima_tentativa.strftime('%d/%m/%Y %H:%M:%S')}")
             print(f"{'='*80}\n")
 
             # Countdown com atualização a cada minuto
-            for minutos_restantes in range(15, 0, -1):
+            for minutos_restantes in range(MINUTOS_ENTRE_TENTATIVAS, 0, -1):
                 print(f"⏰ {minutos_restantes} minuto(s) restante(s)...")
                 time.sleep(60)
 
@@ -384,21 +562,35 @@ def carregar_json_geradora(geradora_cnpj):
         print(f"❌ Erro ao carregar JSON {caminho_json}: {str(e)}")
         return None
 
-def processar_geradora(geradora_cnpj, force=False):
+def processar_geradora(geradora_cnpj, force=False, apenas_ucs=None, reprocessar_tudo=False):
     """Processa uma geradora específica usando seu CNPJ
 
     Args:
         geradora_cnpj (str): CNPJ da geradora
         force (bool): Se True, reprocessa faturas com erro
+        apenas_ucs (list[str] | None): Se informado, processa somente essas
+            nova_uc (mesmo fluxo de login/seleção/download). Usado por
+            scripts/testar_uc.py para testar uma UC isolada.
+        reprocessar_tudo (bool): Se True, ignora a janela diária e refaz TODAS as faturas
+            que a API trouxer, inclusive as já baixadas com sucesso hoje.
     """
     print(f"Processando geradora com CNPJ: {geradora_cnpj}")
-    if force:
+    if reprocessar_tudo:
+        print("♻️ Modo RERRODADA ativado - TODAS as faturas do dia serão refeitas (inclusive as com sucesso)")
+    elif force:
         print("⚠️ Modo FORCE ativado - faturas com erro serão reprocessadas")
+    # "is not None" de propósito: uma lista vazia significa "nenhuma UC", e
+    # não "sem restrição" (evita processar a geradora inteira por engano).
+    if apenas_ucs is not None:
+        apenas_ucs = set(apenas_ucs)
+        print(f"🎯 Processamento restrito às UCs: {', '.join(sorted(apenas_ucs))}")
 
     # 1. Criar JSON filtrado apenas com faturas a_verificar (ou com erro se force=True)
     from function.buscar_dados_api import criar_json_filtrado_por_status
 
-    dados_geradora = criar_json_filtrado_por_status(geradora_cnpj, force=force)
+    dados_geradora = criar_json_filtrado_por_status(
+        geradora_cnpj, force=force, reprocessar_tudo=reprocessar_tudo
+    )
 
     if not dados_geradora:
         print(f"✅ Nenhuma fatura pendente para processar na geradora {geradora_cnpj}")
@@ -406,6 +598,12 @@ def processar_geradora(geradora_cnpj, force=False):
 
     # 2. Extrair lista de UCs filtradas
     lista_ucs = dados_geradora.get("lista_ucs", {})
+
+    if apenas_ucs is not None:
+        lista_ucs = {uc: f for uc, f in lista_ucs.items() if uc in apenas_ucs}
+        if not lista_ucs:
+            print(f"✅ Nenhuma fatura pendente para as UCs {sorted(apenas_ucs)} na geradora {geradora_cnpj}")
+            return True
 
     total_ucs = len(lista_ucs)
     total_faturas = sum(len(f) for f in lista_ucs.values())
@@ -440,6 +638,9 @@ def processar_geradora(geradora_cnpj, force=False):
             ucs_processadas = i + 1
             print(f"\n🔄 Processando UC {ucs_processadas}/{total_ucs}: {nova_uc}")
             print(f"📊 Faturas para processar: {len(faturas_uc)}")
+
+            if i > 0:
+                _pausa_entre_ucs()
 
             # Verificar se precisa renovar login a cada 50 UCs
             if ucs_processadas > 1 and (ucs_processadas - 1) % 50 == 0:
@@ -491,7 +692,7 @@ def processar_geradora(geradora_cnpj, force=False):
 
                             # Aguardar página carregar completamente
                             page.wait_for_load_state("domcontentloaded")
-                            time.sleep(2)  # Aguardar scripts JS carregarem
+                            _pausa(2)  # Aguardar scripts JS carregarem (com jitter)
 
                             # Aguardar input de busca estar disponível
                             input_busca = page.get_by_role("textbox", name="Busque pelo número da UC ou")
@@ -499,37 +700,24 @@ def processar_geradora(geradora_cnpj, force=False):
                             input_busca.wait_for(state="attached", timeout=5000)
 
                             # Garantir que o campo está pronto para interação
-                            time.sleep(1)
+                            _pausa(1)
 
                             # Clicar e preencher com a UC
                             input_busca.click(timeout=10000)
                             input_busca.fill("")  # Limpar primeiro
-                            time.sleep(0.5)
+                            _pausa(0.5)
 
                             # Preencher com a UC
-                            input_busca.fill(nova_uc)
-                            time.sleep(2)  # aguardar a busca responder (resultado ou aviso)
+                            _digitar(input_busca, nova_uc)
+                            _pausa(2)  # aguardar a busca responder (resultado ou aviso)
 
-                            # Verificar se existe botão de "Inativos" e clicar se necessário
-                            try:
-                                botao_inativos = page.get_by_role("button", name=re.compile(r"Inativos", re.IGNORECASE))
-                                if botao_inativos.is_visible(timeout=2000):
-                                    print(f"   ℹ️ Encontrado botão de Inativos, clicando...")
-                                    botao_inativos.click()
-                                    time.sleep(1)
-                            except:
-                                # Se não encontrar o botão de inativos, continua normalmente
-                                pass
-
-                            # Detectar busca SEM correspondência (UC mal cadastrada
-                            # OU login com sucesso falso). A distinção é tratada na
-                            # lógica da UC: 1 isolada = UC errada; 2 seguidas = login falso.
-                            if verificar_sem_correspondencia(page):
-                                raise SemCorrespondenciaError(nova_uc)
-
-                            # Clicar no botão do resultado (button dentro do container de resultados)
-                            page.locator("button").filter(has_text="Código do Cliente:").first.click(timeout=10000)
-                            time.sleep(1)
+                            # Localizar e clicar no card da UC. Trata as seções
+                            # "Ativos"/"Inativos" da listagem e só considera o aviso
+                            # de "sem correspondência" (UC mal cadastrada OU login com
+                            # sucesso falso; 1 isolada = UC errada, 2 seguidas = login
+                            # falso) quando não existe card da UC na página.
+                            selecionar_card_uc(page, nova_uc)
+                            _pausa(1)
 
                             uc_selecionada = True
                             print(f"   ✅ UC selecionada com sucesso")
@@ -570,8 +758,8 @@ def processar_geradora(geradora_cnpj, force=False):
                             print(f"   🔍 URL atual: {current_url}")
 
                             # Verificar se é Access Denied. A função lança
-                            # AccessDeniedError, tratado abaixo com espera de
-                            # 15 minutos, novo login e nova tentativa da UC.
+                            # AccessDeniedError, tratado abaixo com espera
+                            # longa, novo login e nova tentativa da UC.
                             verificar_access_denied(page)
 
                             # Se ainda está na listagem, a troca falhou
@@ -614,7 +802,7 @@ def processar_geradora(geradora_cnpj, force=False):
                             page.wait_for_load_state("domcontentloaded")
 
                             # Aguardar conteúdo carregar
-                            time.sleep(3)
+                            _pausa(3)
 
                             faturas_carregadas = True
                             print(f"   ✅ Página de faturas carregada")
@@ -662,7 +850,27 @@ def processar_geradora(geradora_cnpj, force=False):
                         uc_processada_com_sucesso = True  # Marcar como sucesso para prosseguir
                         break
 
-                    page.locator("div").filter(has_text=re.compile(r"^Mostrar mais faturas$")).click()
+                    # Espera os cards renderizarem antes de contá-los (o clique
+                    # incondicional em "Mostrar mais faturas" fazia esse papel).
+                    try:
+                        page.locator('.card-billing__date').first.wait_for(state="visible", timeout=15000)
+                    except PlaywrightTimeoutError:
+                        print("   ⚠️ Nenhum card de fatura visível após 15s - seguindo mesmo assim")
+
+                    # O portal removeu o botão "Mostrar mais faturas" em 28/08/2026
+                    # (ele só revelava o 13º card). Só clica se ele existir; a
+                    # checagem é instantânea para não custar 5s por UC.
+                    botao_mostrar_mais = page.locator("div").filter(
+                        has_text=re.compile(r"^Mostrar mais faturas$")
+                    ).first
+                    if botao_mostrar_mais.count() > 0:
+                        try:
+                            botao_mostrar_mais.click(timeout=10000)
+                            print("   ✅ Botão 'Mostrar mais faturas' clicado")
+                        except Exception as e:
+                            print(f"   ⚠️ Botão 'Mostrar mais faturas' existe mas o clique falhou: {str(e).splitlines()[0]}")
+                    else:
+                        print("   ℹ️ Botão 'Mostrar mais faturas' ausente - seguindo com as faturas visíveis")
 
                     # Processar faturas desta UC usando a função do tarefa.py
                     print(f"🎯 Iniciando processamento das faturas da UC {nova_uc}")
@@ -674,7 +882,9 @@ def processar_geradora(geradora_cnpj, force=False):
                     }
 
                     # Processar faturas da UC atual com parâmetro force
-                    resultados_uc = processar_faturas_do_json(dados_uc_temp, page, force=force)
+                    resultados_uc = processar_faturas_do_json(
+                        dados_uc_temp, page, force=force, reprocessar_tudo=reprocessar_tudo
+                    )
 
                     # Log dos resultados
                     sucessos_uc = sum(1 for r in resultados_uc if r["sucesso"])
@@ -684,7 +894,7 @@ def processar_geradora(geradora_cnpj, force=False):
 
                 except AccessDeniedError as e:
                     # Access Denied detectado: em vez de parar tudo, aguardar
-                    # 15 minutos, refazer o login e tentar a MESMA UC novamente.
+                    # a espera longa, refazer o login e tentar a MESMA UC novamente.
                     print(f"🛑 Acesso negado ao processar UC {nova_uc}: {str(e)}")
 
                     # Fechar o navegador atual (a sessão foi derrubada)
@@ -694,10 +904,10 @@ def processar_geradora(geradora_cnpj, force=False):
                     except:
                         pass
 
-                    # Aguardar 15 minutos antes de uma nova tentativa
-                    aguardar_antes_de_retentar(15, "Acesso negado")
+                    # Aguardar antes de uma nova tentativa
+                    aguardar_antes_de_retentar(motivo="Acesso negado")
 
-                    # Refazer login (com retry automático de 15 min entre falhas)
+                    # Refazer login (com retry automático entre falhas)
                     print("🔐 Refazendo login após acesso negado...")
                     browser, context, page = fazer_login_com_retry(p, geradora_cnpj)
 
@@ -713,7 +923,12 @@ def processar_geradora(geradora_cnpj, force=False):
                     if i not in indices_sem_correspondencia:
                         indices_sem_correspondencia.append(i)
 
-                    if len(indices_sem_correspondencia) >= 2:
+                    # Com a lista restrita a 1 UC (scripts/testar_uc.py) não existe
+                    # UC seguinte para confirmar: trata a ocorrência como possível
+                    # sucesso falso e refaz o login antes de marcar como mal cadastrada.
+                    # O robô diário (apenas_ucs=None) mantém a regra das 2 UCs seguidas.
+                    minimo_para_relogin = 1 if (apenas_ucs is not None and len(lista_ucs_items) == 1) else 2
+                    if len(indices_sem_correspondencia) >= minimo_para_relogin:
                         if relogins_sucesso_falso >= MAX_RELOGINS_SUCESSO_FALSO:
                             # Já refez login e as mesmas UCs seguem sem correspondência:
                             # são realmente mal cadastradas. Marcar todas e seguir adiante.
@@ -728,14 +943,17 @@ def processar_geradora(geradora_cnpj, force=False):
                             break
 
                         # Duas UCs consecutivas sem correspondência → login com sucesso falso.
-                        print("🚫 Duas UCs consecutivas sem correspondência → login com sucesso falso detectado.")
+                        if minimo_para_relogin == 1:
+                            print("🚫 Única UC da lista sem correspondência → possível login com sucesso falso. Refazendo login antes de marcar.")
+                        else:
+                            print("🚫 Duas UCs consecutivas sem correspondência → login com sucesso falso detectado.")
                         try:
                             browser.close()
                             print("🔒 Navegador fechado após sucesso falso de login")
                         except:
                             pass
 
-                        aguardar_antes_de_retentar(15, "Login com sucesso falso (UCs não carregaram)")
+                        aguardar_antes_de_retentar(motivo="Login com sucesso falso (UCs não carregaram)")
                         print("🔐 Refazendo login após sucesso falso...")
                         browser, context, page = fazer_login_com_retry(p, geradora_cnpj)
                         relogins_sucesso_falso += 1
@@ -757,8 +975,8 @@ def processar_geradora(geradora_cnpj, force=False):
                     print(f"❌ Erro ao processar UC {nova_uc} (tentativa {tentativa_uc}): {str(e)}")
 
                     # Esgotou as tentativas rápidas. Em vez de pular a UC,
-                    # aguardar 15 minutos, refazer o login e tentar a MESMA UC
-                    # novamente (infinitamente), pois normalmente é um erro
+                    # aguardar a espera longa, refazer o login e tentar a MESMA
+                    # UC novamente (infinitamente), pois normalmente é um erro
                     # transitório de carregamento/sessão.
                     if tentativa_uc >= max_tentativas_uc:
                         print(f"⚠️ UC {nova_uc} falhou após {max_tentativas_uc} tentativas rápidas (não carregou/não prosseguiu).")
@@ -770,10 +988,10 @@ def processar_geradora(geradora_cnpj, force=False):
                         except:
                             pass
 
-                        # Aguardar 15 minutos antes de uma nova rodada
-                        aguardar_antes_de_retentar(15, f"Falha ao carregar/processar a UC {nova_uc}")
+                        # Aguardar antes de uma nova rodada
+                        aguardar_antes_de_retentar(motivo=f"Falha ao carregar/processar a UC {nova_uc}")
 
-                        # Refazer login (com retry automático de 15 min entre falhas)
+                        # Refazer login (com retry automático entre falhas)
                         print("🔐 Refazendo login após falhas de carregamento...")
                         browser, context, page = fazer_login_com_retry(p, geradora_cnpj)
 
@@ -864,14 +1082,18 @@ def processar_multiplas_geradoras(cnpjs_lista, force=False):
 
     return sucessos > 0
 
-def processar_todas_geradoras(force=False):
+def processar_todas_geradoras(force=False, reprocessar_tudo=False):
     """Processa todas as geradoras da lista
 
     Args:
         force (bool): Se True, reprocessa faturas com erro
+        reprocessar_tudo (bool): Se True, ignora a janela diária e refaz TODAS as faturas
+            da API, inclusive as já baixadas com sucesso hoje
     """
     print(f"🚀 Iniciando processamento de {len(geradoras_cnpjs)} geradoras")
-    if force:
+    if reprocessar_tudo:
+        print("♻️ Modo RERRODADA ativado - TODAS as faturas do dia serão refeitas (inclusive as com sucesso)")
+    elif force:
         print("⚠️ Modo FORCE ativado - faturas com erro serão reprocessadas")
 
     # Primeiro, buscar dados atualizados da API
@@ -888,7 +1110,9 @@ def processar_todas_geradoras(force=False):
     for i, geradora_cnpj in enumerate(geradoras_cnpjs, 1):
         print(f"\n🔄 Processando geradora {i}/{len(geradoras_cnpjs)}: {geradora_cnpj}")
         try:
-            resultado = processar_geradora(geradora_cnpj, force=force)
+            resultado = processar_geradora(
+                geradora_cnpj, force=force, reprocessar_tudo=reprocessar_tudo
+            )
             if resultado:
                 sucessos += 1
                 print(f"✅ SUCESSO: Geradora {geradora_cnpj} processada com sucesso")
@@ -943,9 +1167,11 @@ def processar_geradora_especifica(geradora_cnpj, force=False):
         return False
 
 if __name__ == "__main__":
-    # Verificar se foi passado o parâmetro --force
+    # Verificar se foi passado o parâmetro --force / --reprocessar-tudo
     import sys
     force_mode = '--force' in sys.argv
+    # --reprocessar-tudo é superconjunto de --force: refaz até o que deu sucesso hoje
+    reprocessar_tudo_mode = '--reprocessar-tudo' in sys.argv
 
     # Inicializar banco de dados
     print("💾 Inicializando banco de dados...")
@@ -957,7 +1183,7 @@ if __name__ == "__main__":
     try:
         # Processar todas as geradoras em loop
         print("🚀 Iniciando processamento de todas as geradoras...")
-        processar_todas_geradoras(force=force_mode)
+        processar_todas_geradoras(force=force_mode, reprocessar_tudo=reprocessar_tudo_mode)
 
         # # Para processar geradoras específicas:
         # processar_usinas = [

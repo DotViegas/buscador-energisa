@@ -1,11 +1,244 @@
 ﻿import requests
 import base64
+import re
+import json
 from datetime import datetime
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 from config import DEBUG_MODE, API_CRIAR_FATURA_DEV, API_CRIAR_FATURA_PROD, API_ATUALIZAR_FATURA_DEV , API_ATUALIZAR_FATURA_PROD, GEUS_APIKEY
 from database import DatabaseManager
 
 debug_mode = DEBUG_MODE
+
+# Baseline do DOM de um clique que funcionou, coletada uma vez por execução
+# para comparar com o diagnóstico dos cliques bloqueados.
+_baseline_dom_impressa = False
+
+# Diagnóstico (JSON + screenshot) do primeiro clique bloqueado da execução.
+# Causa confirmada em 02/09/2026: o ::after da .faturas__list (degradê,
+# position absolute, inset 40px 0 0) cobre a metade inferior do botão nas
+# listas de 1 card. Repetir por fatura (~4/dia) só inflaria o log diário.
+_diagnostico_clique_impresso = False
+
+# Inspeção do DOM ao redor do botão "Baixar 2ª via": o que está no ponto do
+# clique (pilha completa e 5 pontos do botão), a cadeia de ancestrais até a
+# .faturas__list com os estilos que podem bloquear o hit-test e a geometria dos
+# pseudo-elementos da lista. Só lista propriedades fora do valor padrão.
+_JS_INFO_DOM = """el => {
+    const PROPS = ['position', 'top', 'right', 'bottom', 'left', 'inset', 'width', 'height', 'maxHeight',
+        'display', 'overflow', 'clipPath', 'opacity', 'visibility', 'pointerEvents', 'zIndex', 'isolation',
+        'transform', 'content', 'backgroundImage'];
+    const PADRAO = {position: 'static', top: 'auto', right: 'auto', bottom: 'auto', left: 'auto', inset: 'auto',
+        maxHeight: 'none', overflow: 'visible', clipPath: 'none', opacity: '1', visibility: 'visible',
+        pointerEvents: 'auto', zIndex: 'auto', isolation: 'auto', transform: 'none', backgroundImage: 'none'};
+    const classe = n => (n && n.getAttribute && n.getAttribute('class')) || '';
+    const box = n => {
+        if (!n) return null;
+        const b = n.getBoundingClientRect();
+        return {x: Math.round(b.x), y: Math.round(b.y), w: Math.round(b.width), h: Math.round(b.height)};
+    };
+    const estilo = (n, pseudo) => {
+        if (!n) return null;
+        const s = getComputedStyle(n, pseudo || null);
+        if (pseudo && (s.content === 'none' || s.content === 'normal')) return {content: s.content};
+        const o = {};
+        for (const p of PROPS) { if (s[p] !== PADRAO[p]) o[p] = s[p]; }
+        return o;
+    };
+    const lista = el.closest('.faturas__list');
+    const r = el.getBoundingClientRect();
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    const pontos = {centro: [cx, cy], supEsq: [r.left + 2, r.top + 2], supDir: [r.right - 2, r.top + 2],
+        infEsq: [r.left + 2, r.bottom - 2], infDir: [r.right - 2, r.bottom - 2]};
+    const noPonto = {};
+    for (const [nome, [x, y]] of Object.entries(pontos)) {
+        const t = document.elementFromPoint(x, y);
+        noPonto[nome] = t ? {tag: t.tagName, classe: classe(t), dentroDoBotao: el.contains(t), ehALista: t === lista} : null;
+    }
+    const pilha = document.elementsFromPoint(cx, cy).slice(0, 10)
+        .map(n => ({tag: n.tagName, classe: classe(n), ehOBotao: el.contains(n)}));
+    const cadeia = [];
+    for (let n = el; n && n !== document.body && cadeia.length < 15; n = n.parentElement) {
+        cadeia.push({tag: n.tagName, classe: classe(n), box: box(n), estilo: estilo(n)});
+        if (n === lista) break;
+    }
+    let animacoes = null;
+    try {
+        animacoes = {documento: document.getAnimations().length,
+            lista: lista ? lista.getAnimations({subtree: true}).length : null};
+    } catch (e) {}
+    return {
+        viewport: {w: innerWidth, h: innerHeight, scrollY: Math.round(scrollY)},
+        botao: {box: box(el), disabled: el.disabled,
+            visivel: el.checkVisibility ? el.checkVisibility({checkOpacity: true, checkVisibilityCSS: true}) : null},
+        noPontoDoClique: noPonto,
+        pilhaNoCentro: pilha,
+        cadeiaAteALista: cadeia,
+        lista: lista ? {classe: classe(lista), box: box(lista), filhos: lista.children.length,
+            before: estilo(lista, '::before'), after: estilo(lista, '::after')} : null,
+        animacoes: animacoes,
+        htmlDaLista: lista ? lista.outerHTML.slice(0, 3000) : null
+    };
+}"""
+
+
+def _coletar_info_dom(download_button):
+    """Executa _JS_INFO_DOM no botão de download. Retorna dict ou None se falhar."""
+    try:
+        return download_button.evaluate(_JS_INFO_DOM)
+    except Exception as e:
+        print(f"⚠️ Não foi possível coletar informações do DOM: {str(e)}")
+        return None
+
+
+def _descrever_interceptador(erro):
+    """Extrai do call log do Playwright o elemento que interceptou o clique."""
+    m = re.search(r'(<[^>\n]+>)[^\n]*intercepts pointer events', str(erro))
+    return m.group(1) if m else 'elemento não identificado'
+
+
+def _diagnosticar_clique_bloqueado(page, download_button, nova_uc, mes_referencia, tentativa):
+    """Registra no log o que está cobrindo o botão de download.
+
+    Chamado na primeira vez em que o Playwright reporta "intercepts pointer
+    events" na execução. Imprime o JSON de _JS_INFO_DOM e salva um
+    screenshot em logs/ para identificar a causa do bloqueio sem precisar
+    reproduzir na mão.
+    """
+    import os
+
+    info = _coletar_info_dom(download_button)
+    if info is not None:
+        print("🔎 Diagnóstico do clique bloqueado:")
+        print(json.dumps(info, ensure_ascii=False, indent=1))
+
+    try:
+        os.makedirs("logs", exist_ok=True)
+        nome = (f"clique_bloqueado_{nova_uc.replace('/', '_')}_"
+                f"{mes_referencia.replace('/', '_')}_t{tentativa}.png")
+        caminho = os.path.join("logs", nome)
+        page.screenshot(path=caminho, full_page=True)
+        print(f"📸 Screenshot salvo em {caminho}")
+    except Exception as e:
+        print(f"⚠️ Não foi possível salvar screenshot: {str(e)}")
+
+
+def _neutralizar_interceptador(page, download_button):
+    """Tenta remover o que cobre o botão para permitir um clique real.
+
+    Cobre as causas prováveis do bloqueio: pseudo-elemento da lista por cima
+    do card, pointer-events:none em algum ancestral, z-index negativo ou
+    recorte por overflow. Um clique real (ao contrário do dispatch_event)
+    concede "user activation", necessária caso o download use window.open.
+
+    Returns:
+        list[str]: alterações feitas no DOM, para o log.
+    """
+    page.add_style_tag(
+        content=".faturas__list::before, .faturas__list::after { pointer-events: none !important; }"
+    )
+    return download_button.evaluate("""el => {
+        const feitas = [];
+        const lista = el.closest('.faturas__list');
+        for (let n = el; n && n !== document.body; n = n.parentElement) {
+            const s = getComputedStyle(n);
+            const cls = (n.getAttribute('class') || '').trim();
+            const nome = n.tagName + (cls ? '.' + cls.split(/\\s+/).join('.') : '');
+            if (s.pointerEvents === 'none') {
+                n.style.setProperty('pointer-events', 'auto', 'important');
+                feitas.push(nome + ': pointer-events none -> auto');
+            }
+            if (parseInt(s.zIndex) < 0) {
+                n.style.setProperty('z-index', '1', 'important');
+                feitas.push(nome + ': z-index ' + s.zIndex + ' -> 1');
+            }
+            if (/hidden|clip/.test(s.overflow)) {
+                n.style.setProperty('overflow', 'visible', 'important');
+                feitas.push(nome + ': overflow ' + s.overflow + ' -> visible');
+            }
+            if (n === lista) break;
+        }
+        return feitas;
+    }""")
+
+
+def _fallback_clique_interceptado(page, download_button, nova_uc, mes_referencia, tentativa, estado, erro):
+    """Fallbacks para quando o clique real em "Baixar 2ª via" foi interceptado.
+
+    Alterna a estratégia a cada interceptação dentro da mesma fatura:
+    - ímpar: dispatch_event('click') direto no botão (ignora o hit-test);
+    - par: neutraliza o interceptador e repete o clique real (preserva user
+      activation, caso o dispatch não tenha gerado download); se ainda assim
+      for interceptado, cai no dispatch_event.
+
+    Returns:
+        str: estratégia usada.
+    """
+    global _diagnostico_clique_impresso
+
+    print(f"⚠️ Clique interceptado por {_descrever_interceptador(erro)}")
+    if not _diagnostico_clique_impresso:
+        _diagnostico_clique_impresso = True
+        _diagnosticar_clique_bloqueado(page, download_button, nova_uc, mes_referencia, tentativa)
+
+    estado['fallbacks'] = estado.get('fallbacks', 0) + 1
+    if estado['fallbacks'] % 2 == 1:
+        print("↪️ Fallback: dispatch_event('click') direto no botão")
+        download_button.dispatch_event('click', timeout=5000)
+        return 'dispatch_event'
+
+    alteracoes = _neutralizar_interceptador(page, download_button)
+    print(f"↪️ Fallback: interceptador neutralizado ({len(alteracoes)} ajustes: {alteracoes}) + clique real")
+    try:
+        download_button.click(timeout=5000)
+        return 'neutralizar+click'
+    except PlaywrightTimeoutError as e:
+        if 'intercepts pointer events' not in str(e):
+            raise
+        print(f"⚠️ Ainda interceptado por {_descrever_interceptador(e)} - usando dispatch_event")
+        download_button.dispatch_event('click', timeout=5000)
+        return 'neutralizar+dispatch_event'
+
+
+def _clicar_botao_download(page, download_button, nova_uc, mes_referencia, tentativa, estado):
+    """Clica em "Baixar 2ª via" com fallback quando o clique é interceptado.
+
+    Nas UCs com apenas 1 card de fatura a própria div .faturas__list fica por
+    cima do botão e o clique "real" do Playwright nunca chega nele (erro
+    "intercepts pointer events"). Até 27/08/2026 o clique em "Mostrar mais
+    faturas" re-renderizava a lista e limpava esse estado; o portal removeu o
+    botão em 28/08 e as UCs de 1 card passaram a falhar já na 1ª tentativa.
+
+    Args:
+        estado (dict): compartilhado entre as tentativas da mesma fatura
+            (controla a alternância de fallbacks).
+
+    Returns:
+        str: estratégia usada ('click', 'dispatch_event', 'neutralizar+click'
+            ou 'neutralizar+dispatch_event').
+    """
+    global _baseline_dom_impressa
+
+    # Espera de renderização separada do hit-test: após um page.reload() o
+    # botão pode levar mais de 10 s para aparecer.
+    download_button.wait_for(state='visible', timeout=30000)
+    # Baseline só de uma fatura sem fallback anterior (o DOM ainda está intacto)
+    info_pre = None
+    if not _baseline_dom_impressa and not estado.get('fallbacks'):
+        info_pre = _coletar_info_dom(download_button)
+
+    try:
+        download_button.click(timeout=10000)
+    except PlaywrightTimeoutError as e:
+        if 'intercepts pointer events' not in str(e):
+            raise
+        return _fallback_clique_interceptado(page, download_button, nova_uc, mes_referencia, tentativa, estado, e)
+
+    if info_pre is not None:
+        _baseline_dom_impressa = True
+        print("📐 Baseline DOM de um clique normal (comparar com cliques bloqueados): "
+              + json.dumps(info_pre, ensure_ascii=False))
+    return 'click'
+
 
 def fazer_download_com_retry(page, download_button, nova_uc, mes_referencia, primeira_fatura=False):
     """
@@ -28,13 +261,15 @@ def fazer_download_com_retry(page, download_button, nova_uc, mes_referencia, pri
     download_sucesso = False
     arquivo_base64 = None
     
+    estado_clique = {}  # alternância de fallbacks entre as tentativas da mesma fatura
+
     while tentativa_atual < max_tentativas and not download_sucesso:
         tentativa_atual += 1
         print(f"Tentativa {tentativa_atual} de {max_tentativas} para download da fatura")
         
         try:
-            # Clicar no botão de download
-            download_button.click()
+            # Clicar no botão de download (com fallback se o clique for interceptado)
+            estrategia = _clicar_botao_download(page, download_button, nova_uc, mes_referencia, tentativa_atual, estado_clique)
             
             # Aguardar o download ou modal de erro com verificação periódica
             download = None
@@ -117,7 +352,7 @@ def fazer_download_com_retry(page, download_button, nova_uc, mes_referencia, pri
             os.remove(temp_path)
             
             download_sucesso = True
-            print(f"✅ Download realizado com sucesso na tentativa {tentativa_atual}")
+            print(f"✅ Download realizado com sucesso na tentativa {tentativa_atual} (via {estrategia})")
             
         except Exception as download_error:
             print(f"❌ Erro no download (tentativa {tentativa_atual}): {str(download_error)}")
@@ -136,7 +371,7 @@ def fazer_download_com_retry(page, download_button, nova_uc, mes_referencia, pri
     
     return arquivo_base64
 
-def processar_faturas_do_json(json_data, page, force=False):
+def processar_faturas_do_json(json_data, page, force=False, reprocessar_tudo=False):
     """
     Processa as faturas do JSON e chama as funções apropriadas
     
@@ -144,6 +379,8 @@ def processar_faturas_do_json(json_data, page, force=False):
         json_data (dict): Dados do JSON com as faturas organizadas
         page: Instância da página do Playwright
         force (bool): Se True, reprocessa faturas com erro
+        reprocessar_tudo (bool): Se True, ignora a janela diária e reprocessa qualquer
+            fatura, inclusive as que já deram sucesso hoje
     """
     import io
     import sys
@@ -194,7 +431,9 @@ def processar_faturas_do_json(json_data, page, force=False):
                 print(f"Processando fatura ID: {fatura_id}, Mês: {mes_referencia}, Tarefa: {tarefa}")
                 
                 # Verificar status no banco de dados
-                status_db, deve_processar = db.verificar_status_fatura(fatura_id, force=force)
+                status_db, deve_processar = db.verificar_status_fatura(
+                    fatura_id, force=force, reprocessar_tudo=reprocessar_tudo
+                )
                 
                 if not deve_processar:
                     if status_db == 'sucesso':
@@ -806,13 +1045,25 @@ def executar_fatura_agendada(nova_uc, mes_referencia, page, fatura_id, fatura_ex
                     situacao_pagamento = "desconhecida"
                 
                 print(f"Situação de pagamento detectada: {situacao_pagamento}")
-                
+
+                # Extrair data de vencimento (mesmo padrão de executar_fatura_vencida)
+                data_vencimento = None
+                try:
+                    vencimento_element = card_completo.locator('.font-bold').last
+                    vencimento_texto = vencimento_element.text_content().strip()
+                    dia, mes, ano = vencimento_texto.split('/')
+                    data_vencimento = f"{ano}-{mes}-{dia}"  # AAAA-MM-DD
+                    print(f"Vencimento: {vencimento_texto} -> {data_vencimento}")
+                except Exception as e:
+                    print(f"⚠️ Não foi possível extrair a data de vencimento: {e}")
+
                 dados_fatura = {
-                    "situacao_pagamento": situacao_pagamento
+                    "situacao_pagamento": situacao_pagamento,
+                    "data_vencimento": data_vencimento
                 }
-                
+
                 break
-        
+
         if not fatura_encontrada:
             print(f"ℹ️ Fatura não localizada para o mês {mes_busca}")
             return True, "nao_encontrada", {}  # Retorna True pois não é um erro, apenas não foi encontrada
@@ -851,6 +1102,38 @@ def executar_fatura_agendada(nova_uc, mes_referencia, page, fatura_id, fatura_ex
                 return False, "erro", dados_fatura
         
         elif situacao_pagamento in ["a_vencer", "vencida"]:
+            # Se a fatura agendada permanecer vencida por 2 dias ou mais após o
+            # vencimento, reclassificar para "vencida" (o pagamento agendado falhou).
+            # Assim ela volta ao fluxo normal de fatura vencida na próxima execução.
+            reclassificar = False
+            if situacao_pagamento == "vencida" and data_vencimento:
+                try:
+                    venc = datetime.strptime(data_vencimento, "%Y-%m-%d").date()
+                    dias_desde_vencimento = (datetime.now().date() - venc).days
+                    if dias_desde_vencimento >= 2:
+                        reclassificar = True
+                        print(f"⏰ Fatura agendada vencida há {dias_desde_vencimento} dia(s) - reclassificando para 'vencida'")
+                except Exception as e:
+                    print(f"⚠️ Erro ao avaliar prazo de vencimento: {e}")
+
+            if reclassificar:
+                body = {
+                    "id": fatura_id,
+                    "situacao_pagamento": "vencida"
+                }
+
+                print(f"Enviando reclassificação para 'vencida' via API: {url}")
+                response = requests.post(url, headers=headers, json=body)
+
+                if response.status_code == 200:
+                    print("✅ Fatura reclassificada para 'vencida' com sucesso")
+                    dados_fatura["situacao_pagamento"] = "vencida"
+                    return True, "situacao_alterada", dados_fatura
+                else:
+                    print(f"❌ Erro ao enviar para API: {response.status_code}")
+                    print(f"Resposta: {response.text}")
+                    return False, "erro", dados_fatura
+
             print(f"📅 Fatura ainda está como '{situacao_pagamento}' - mantendo como 'agendado'")
             print("✓ Nenhuma mudança detectada - não é necessário enviar para API")
             return True, "sem_alteracao", dados_fatura
