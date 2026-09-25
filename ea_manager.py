@@ -22,6 +22,7 @@ from rich.table import Table
 from rich.text import Text
 
 from database import DatabaseManager
+from function import rateio_lista
 from robo import geradoras_cnpjs
 
 load_dotenv()
@@ -121,6 +122,7 @@ OPCOES_MENU = [
     ("11", "Gerar relatório XLSX de hoje"),
     ("12", "Gerar relatório XLSX por intervalo"),
     ("13", "Resetar faturas com erro"),
+    ("14", "Rateio: ver lista do mês (rateio/lista/AAAA-MM)"),
     ("0",  "Sair"),
 ]
 
@@ -721,6 +723,127 @@ def acao_relatorio_intervalo(console: Console) -> None:
         console.print(f"   • {a}")
 
 
+# ==================== AÇÕES: RATEIO ====================
+
+def _fmt_num(valor) -> str:
+    if valor is None:
+        return "—"
+    return f"{valor:,.0f}".replace(",", ".") if float(valor).is_integer() else f"{valor:g}"
+
+
+def _mostrar_planilha_rateio(console: Console, planilha) -> None:
+    console.print(Panel(
+        Text.assemble(
+            ("Geradora: ", "dim"), (planilha.geradora or "?", "bold"),
+            ("   ·   Mês de referência: ", "dim"), (planilha.mes_referencia or "?", "bold"),
+            ("\nArquivo: ", "dim"), (os.path.basename(planilha.arquivo), ""),
+            ("\nDocumentos: ", "dim"),
+            (", ".join(os.path.basename(d) for d in planilha.documentos) or "nenhum", ""),
+        ),
+        title="[bold]📑 Rateio a emitir[/bold]", border_style="cyan",
+    ))
+
+    tabela = Table(border_style="cyan")
+    tabela.add_column("#", style="bold cyan", justify="right")
+    tabela.add_column("Usina", style="bold")
+    tabela.add_column("UC da usina")
+    tabela.add_column("Classe")
+    tabela.add_column("Beneficiárias", justify="right")
+    tabela.add_column("Soma %", justify="right")
+    tabela.add_column("kWh", justify="right")
+    for i, usina in enumerate(planilha.usinas, 1):
+        soma_ok = abs(usina.soma_percentual - 100) <= 0.01
+        tabela.add_row(
+            str(i), usina.nome,
+            usina.uc_geradora or Text("não informada", style="yellow"),
+            usina.classe, str(len(usina.beneficiarias)),
+            Text(f"{usina.soma_percentual:g}%", style="green" if soma_ok else "bold red"),
+            _fmt_num(usina.total_kwh),
+        )
+    console.print(tabela)
+    console.print(
+        f"[dim]{len(planilha.usinas)} usinas · {planilha.total_linhas} linhas de rateio · "
+        f"{planilha.ucs_distintas} UCs distintas · bateria: {planilha.uc_bateria or '—'}[/dim]"
+    )
+
+    if planilha.avisos:
+        console.print(f"\n[bold yellow]⚠️ {len(planilha.avisos)} aviso(s):[/bold yellow]")
+        for aviso in planilha.avisos:
+            console.print(f"   • {aviso}")
+    else:
+        console.print("\n[bold green]✅ Planilha sem avisos.[/bold green]")
+
+
+def _mostrar_usina_rateio(console: Console, usina) -> None:
+    tabela = Table(title=f"{usina.nome} ({usina.classe}) · UC {usina.uc_geradora or '?'}",
+                   border_style="cyan")
+    tabela.add_column("#", style="bold cyan", justify="right")
+    tabela.add_column("UC beneficiária")
+    tabela.add_column("Cliente")
+    tabela.add_column("Situação")
+    tabela.add_column("%", justify="right", style="bold")
+    tabela.add_column("kWh", justify="right")
+    for i, b in enumerate(usina.beneficiarias, 1):
+        cliente = Text("🔋 bateria (sobra da usina)", style="magenta") if b.bateria else b.cliente
+        tabela.add_row(str(i), b.uc, cliente, b.situacao, f"{_fmt_num(b.percentual)}%", _fmt_num(b.kwh))
+    console.print(tabela)
+
+
+def acao_rateio_lista(console: Console) -> None:
+    meses = rateio_lista.listar_meses()
+    if not meses:
+        console.print("[yellow]⚠️ Nenhuma pasta AAAA-MM em rateio/lista/.[/yellow]")
+        return
+
+    tabela = Table(title="📅 Meses de referência", border_style="cyan")
+    tabela.add_column("#", style="bold cyan", justify="right")
+    tabela.add_column("Mês", style="bold")
+    tabela.add_column("Planilhas", justify="right")
+    padrao = None
+    for i, mes in enumerate(meses, 1):
+        qtd = len(rateio_lista.listar_planilhas(mes))
+        if qtd and padrao is None:
+            padrao = str(i)
+        tabela.add_row(str(i), mes, str(qtd))
+    console.print(tabela)
+
+    padrao = padrao or "1"
+    escolha = input(f"\nNúmero do mês (ENTER = {meses[int(padrao) - 1]}): ").strip() or padrao
+    try:
+        mes = meses[int(escolha) - 1]
+        if int(escolha) < 1:
+            raise IndexError
+    except (ValueError, IndexError):
+        console.print("[red]Entrada inválida.[/red]")
+        return
+
+    planilhas = []
+    for caminho in rateio_lista.listar_planilhas(mes):
+        try:
+            planilhas.append(rateio_lista.ler_planilha(caminho))
+        except Exception as e:
+            console.print(f"[red]❌ {os.path.basename(caminho)}: {e}[/red]")
+    if not planilhas:
+        console.print(f"[yellow]⚠️ Nenhuma planilha válida em rateio/lista/{mes}/.[/yellow]")
+        return
+
+    for planilha in planilhas:
+        console.print()
+        _mostrar_planilha_rateio(console, planilha)
+        while True:
+            escolha = input(f"\n[{planilha.geradora}] Número da usina para ver as beneficiárias "
+                            "(ENTER para seguir): ").strip()
+            if not escolha:
+                break
+            try:
+                indice = int(escolha) - 1
+                if indice < 0:
+                    raise IndexError
+                _mostrar_usina_rateio(console, planilha.usinas[indice])
+            except (ValueError, IndexError):
+                console.print("[red]Número fora da lista.[/red]")
+
+
 # ==================== MAIN LOOP ====================
 
 ACOES = {
@@ -737,6 +860,7 @@ ACOES = {
     "11": acao_relatorio_hoje,
     "12": acao_relatorio_intervalo,
     "13": acao_resetar_erros,
+    "14": acao_rateio_lista,
 }
 
 

@@ -33,6 +33,9 @@ celerybeat.pid
 # Arquivos de mídia e downloads
 media/*
 !media/.gitkeep
+
+# Rateio das usinas: documentos pessoais (RG, cartão CNPJ) e planilhas com dados de clientes
+rateio/
 *.pdf
 *.zip
 
