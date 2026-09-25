@@ -9,7 +9,7 @@ Diferenças para o robo.py (que continua disponível para comparação):
     Faturas que falharam por causa do bloqueio são refeitas após o relogin.
   - Métricas por sessão (UCs e faturas por login) para medir a eficiência.
 
-Uso: python robo_v2.py [--force] [--reprocessar-tudo]
+Uso: python robo_v2.py [--force] [--reprocessar-tudo] [--geradora CNPJ]
 """
 import os
 import re
@@ -409,9 +409,28 @@ def travar_instancia():
     return arquivo
 
 
+def selecionar_geradoras(argv):
+    """--geradora <CNPJ/CPF> restringe a uma geradora (usado pelo ea_manager.py).
+
+    Returns:
+        list[str] | None: geradoras a processar, ou None se o documento não é de
+        nenhuma geradora cadastrada.
+    """
+    if '--geradora' not in argv:
+        return list(geradoras_cnpjs)
+    posicao = argv.index('--geradora') + 1
+    alvo = re.sub(r"\D", "", argv[posicao]) if posicao < len(argv) else ""
+    escolhidas = [c for c in geradoras_cnpjs if alvo and re.sub(r"\D", "", c) == alvo]
+    return escolhidas or None
+
+
 def main():
     force = '--force' in sys.argv
     reprocessar_tudo = '--reprocessar-tudo' in sys.argv
+    geradoras = selecionar_geradoras(sys.argv)
+    if geradoras is None:
+        print("❌ --geradora: informe o CNPJ/CPF de uma geradora cadastrada em geradoras.py.")
+        sys.exit(2)
 
     trava = travar_instancia()
     if trava is None:
@@ -438,14 +457,14 @@ def main():
             return
 
         with sync_playwright() as p:
-            for n, cnpj in enumerate(geradoras_cnpjs, 1):
-                print(f"\n🔄 Geradora {n}/{len(geradoras_cnpjs)}: {cnpj}")
+            for n, cnpj in enumerate(geradoras, 1):
+                print(f"\n🔄 Geradora {n}/{len(geradoras)}: {cnpj}")
                 try:
                     processar_geradora(p, cnpj, force=force, reprocessar_tudo=reprocessar_tudo)
                     print(f"✅ SUCESSO: Geradora {cnpj} processada")
                 except Exception as e:
                     print(f"❌ ERRO: Geradora {cnpj}: {e}")
-                if n < len(geradoras_cnpjs):
+                if n < len(geradoras):
                     time.sleep(5)
         print(f"\n✅ Execução finalizada - {datetime.now():%d/%m/%Y %H:%M:%S}")
     except Exception as e:

@@ -184,9 +184,14 @@ def renderizar_painel(console: Console) -> None:
 
 # ==================== AÇÕES: SCHEDULER ====================
 
+# Robô v2 (Patchright + Chrome instalado). Para voltar ao antigo: "robo.py"
+# (o robo.py não aceita --geradora; a opção 5 usaria processar_geradora_especifica).
+ROBO_SCRIPT = "robo_v2.py"
+
+
 def _executar_robo(force: bool = False, reprocessar_tudo: bool = False) -> None:
-    """Roda robo.py em subprocess; logs vão direto para o terminal do painel."""
-    args = [sys.executable, "robo.py"]
+    """Roda o robô em subprocess; logs vão direto para o terminal do painel."""
+    args = [sys.executable, ROBO_SCRIPT]
     if reprocessar_tudo:
         # Superconjunto de --force: refaz até o que já deu sucesso hoje.
         args.append("--reprocessar-tudo")
@@ -196,16 +201,8 @@ def _executar_robo(force: bool = False, reprocessar_tudo: bool = False) -> None:
 
 
 def _executar_geradora(cnpj: str) -> None:
-    """Roda processar_geradora_especifica para um CNPJ em subprocess."""
-    codigo = (
-        "import sys; "
-        "from robo import processar_geradora_especifica; "
-        "processar_geradora_especifica(sys.argv[1])"
-    )
-    subprocess.run(
-        [sys.executable, "-c", codigo, cnpj],
-        cwd=PROJECT_DIR,
-    )
+    """Roda o robô só para uma geradora em subprocess."""
+    subprocess.run([sys.executable, ROBO_SCRIPT, "--geradora", cnpj], cwd=PROJECT_DIR)
 
 
 def acao_ativar_scheduler(console: Console) -> None:
@@ -229,7 +226,7 @@ def acao_ativar_scheduler(console: Console) -> None:
                 (f"⏰ Horário programado: ", "white"),
                 (f"todo dia às {hora}\n", "bold yellow"),
                 ("📋 Ação: ", "white"),
-                ("rodar robo.py (todas as geradoras)\n\n", "bold"),
+                (f"rodar {ROBO_SCRIPT} (todas as geradoras)\n\n", "bold"),
                 ("Pressione ", "dim"),
                 ("Ctrl+C", "bold yellow"),
                 (" para parar e voltar ao menu.", "dim"),
@@ -264,7 +261,7 @@ def acao_ativar_scheduler(console: Console) -> None:
 # ==================== AÇÕES: ROBÔ ====================
 
 def acao_rodar_robo(console: Console) -> None:
-    console.print("\n[bold cyan]🚀 Iniciando robo.py (todas as geradoras)...[/bold cyan]\n")
+    console.print(f"\n[bold cyan]🚀 Iniciando {ROBO_SCRIPT} (todas as geradoras)...[/bold cyan]\n")
     _executar_robo(force=False)
 
 
@@ -294,7 +291,7 @@ def acao_rerrodar_dia(console: Console) -> None:
         return
 
     console.print(
-        "\n[bold magenta]♻️  Iniciando robo.py --reprocessar-tudo "
+        f"\n[bold magenta]♻️  Iniciando {ROBO_SCRIPT} --reprocessar-tudo "
         "(refazendo o dia inteiro)...[/bold magenta]\n"
     )
     _executar_robo(reprocessar_tudo=True)
@@ -302,7 +299,7 @@ def acao_rerrodar_dia(console: Console) -> None:
 
 def acao_rodar_robo_force(console: Console) -> None:
     console.print(
-        "\n[bold yellow]🚀 Iniciando robo.py --force (reprocessando erros)...[/bold yellow]\n"
+        f"\n[bold yellow]🚀 Iniciando {ROBO_SCRIPT} --force (reprocessando erros)...[/bold yellow]\n"
     )
     _executar_robo(force=True)
 
