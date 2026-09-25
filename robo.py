@@ -1,4 +1,5 @@
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import sync_playwright
+from function.erros_navegador import TIMEOUT_ERRORS
 import time
 import re
 import sys
@@ -227,7 +228,7 @@ def _aguardar_visivel(locator, timeout_ms):
     try:
         locator.wait_for(state="visible", timeout=timeout_ms)
         return True
-    except PlaywrightTimeoutError:
+    except TIMEOUT_ERRORS:
         return False
 
 
@@ -432,7 +433,7 @@ def fazer_login(p, geradora_cnpj):
             try:
                 page.wait_for_selector("button:has-text('67')", timeout=30000)
                 break  # avançou para a seleção de telefone
-            except PlaywrightTimeoutError:
+            except TIMEOUT_ERRORS:
                 if tentativa_cnpj >= MAX_TENTATIVAS_CNPJ:
                     raise  # esgotou as tentativas → cai no retry completo de login
                 print(f"⚠️ Portal voltou para a tela de CPF/CNPJ. Reenviando "
@@ -854,7 +855,7 @@ def processar_geradora(geradora_cnpj, force=False, apenas_ucs=None, reprocessar_
                     # incondicional em "Mostrar mais faturas" fazia esse papel).
                     try:
                         page.locator('.card-billing__date').first.wait_for(state="visible", timeout=15000)
-                    except PlaywrightTimeoutError:
+                    except TIMEOUT_ERRORS:
                         print("   ⚠️ Nenhum card de fatura visível após 15s - seguindo mesmo assim")
 
                     # O portal removeu o botão "Mostrar mais faturas" em 28/08/2026

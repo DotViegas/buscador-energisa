@@ -60,3 +60,6 @@ htmlcov/
 *.tmp
 *.bak
 *.cache
+# Perfil persistente do Chrome usado pelo robo_v2 (cookies de sessão)
+perfil_chrome/
+robo_v2.lock

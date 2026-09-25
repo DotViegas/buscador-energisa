@@ -3,7 +3,8 @@ import base64
 import re
 import json
 from datetime import datetime
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import sync_playwright
+from function.erros_navegador import TIMEOUT_ERRORS
 from config import DEBUG_MODE, API_CRIAR_FATURA_DEV, API_CRIAR_FATURA_PROD, API_ATUALIZAR_FATURA_DEV , API_ATUALIZAR_FATURA_PROD, GEUS_APIKEY
 from database import DatabaseManager
 
@@ -191,7 +192,7 @@ def _fallback_clique_interceptado(page, download_button, nova_uc, mes_referencia
     try:
         download_button.click(timeout=5000)
         return 'neutralizar+click'
-    except PlaywrightTimeoutError as e:
+    except TIMEOUT_ERRORS as e:
         if 'intercepts pointer events' not in str(e):
             raise
         print(f"⚠️ Ainda interceptado por {_descrever_interceptador(e)} - usando dispatch_event")
@@ -221,14 +222,30 @@ def _clicar_botao_download(page, download_button, nova_uc, mes_referencia, tenta
     # Espera de renderização separada do hit-test: após um page.reload() o
     # botão pode levar mais de 10 s para aparecer.
     download_button.wait_for(state='visible', timeout=30000)
+    # Com a página rolada, o ::after da lista cobre o botão e o Playwright fica
+    # rolando para lá e para cá até o timeout; no topo o clique passa
+    # (observado em 25/09/2026 rolando a página à mão durante a execução).
+    try:
+        page.evaluate("window.scrollTo(0, 0)")
+    except Exception:
+        pass
     # Baseline só de uma fatura sem fallback anterior (o DOM ainda está intacto)
     info_pre = None
     if not _baseline_dom_impressa and not estado.get('fallbacks'):
         info_pre = _coletar_info_dom(download_button)
 
+    # Clique de teste (não clica de verdade): detecta a interceptação em ~2 s e
+    # vai direto ao fallback, em vez de 10 s de rolagem. Outro motivo de timeout
+    # (botão ainda animando etc.) segue para o clique normal com prazo cheio.
+    try:
+        download_button.click(trial=True, timeout=2000)
+    except TIMEOUT_ERRORS as e:
+        if 'intercepts pointer events' in str(e):
+            return _fallback_clique_interceptado(page, download_button, nova_uc, mes_referencia, tentativa, estado, e)
+
     try:
         download_button.click(timeout=10000)
-    except PlaywrightTimeoutError as e:
+    except TIMEOUT_ERRORS as e:
         if 'intercepts pointer events' not in str(e):
             raise
         return _fallback_clique_interceptado(page, download_button, nova_uc, mes_referencia, tentativa, estado, e)
