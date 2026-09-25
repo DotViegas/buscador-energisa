@@ -1,5 +1,5 @@
 @echo off
-REM Script para executar o robo.py com ambiente virtual ativado
+REM Script para executar o robo_v2.py com ambiente virtual ativado
 REM Criado para agendamento no Task Scheduler do Windows
 
 title Energisa - Busca de Faturas
@@ -27,8 +27,9 @@ if errorlevel 1 (
 echo Ambiente virtual ativado com sucesso!
 
 REM Executar o script Python
-echo Executando robo.py...
-python robo.py %*
+echo Executando robo_v2.py...
+REM Robo v2 (Patchright + Chrome instalado). Para voltar ao antigo: python robo.py
+python robo_v2.py %*
 
 REM Capturar código de saída
 set EXIT_CODE=%errorlevel%
