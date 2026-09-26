@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Alteração e cadastro de unidades consumidoras no sistema de compensação</title>
+<link rel="stylesheet" href="estilo.css">
+</head>
+<body>
+<!-- Textos idênticos ao formulário Energisa versão 2026-01. Os campos com cifrão são
+     preenchidos por function/formulario_rateio.py; só a tabela muda de tamanho. -->
+
+<p class="titulo">ALTERAÇÃO E CADASTRO DE UNIDADES CONSUMIDORAS NO SISTEMA DE COMPENSAÇÃO</p>
+
+<p>Solicito que o excedente de energia injetada na rede, pela unidade consumidora de número
+$uc_geradora, disponível para alocação conforme a REN ANEEL 1.000/2021 (alterada pela REN
+ANEEL 1.059/2023), seja distribuído entre as unidades consumidoras listadas abaixo, de acordo com
+os percentuais indicados. Essa solicitação substitui qualquer configuração de rateio informada
+anteriormente:</p>
+
+<table class="benef">
+  <colgroup><col class="c1"><col class="c2"><col class="c3"><col class="c4"><col class="c5"></colgroup>
+  <thead>
+    <tr>
+      <th>Unidade<br>Consumidora<br><small>(beneficiária)</small></th>
+      <th>Nome do Titular</th>
+      <th>CPF/CNPJ Titular</th>
+      <th>Endereço <small>(beneficiária)</small></th>
+      <th>%</th>
+    </tr>
+  </thead>
+  <tbody>
+$linhas_tabela
+  </tbody>
+</table>
+
+<p><b>O que você precisa saber:</b></p>
+<div class="vazio"></div>
+<p class="check">Para unidade geradora com empreendimento com múltiplas unidades consumidoras com micro
+ou minigeração distribuída ou geração compartilhada, há duas opções:</p>
+<ul class="bolinha">
+  <li>Considerar toda a energia injetada como excedente. Neste caso, o percentual <b>deve ser 0%.</b></li>
+  <li>Destinar parte da energia injetada para a unidade geradora. Neste caso, informar percentual
+  entre <b>0% e 100%.</b></li>
+</ul>
+<p><b>Percentual de alocação do saldo na Geradora (%): $percentual_geradora</b></p>
+<div class="vazio"></div>
+<p class="check">Apenas unidades consumidoras com contrato ativo podem ser cadastradas como beneficiárias.
+Caso alguma delas não tenha contrato no momento do cadastro, seguiremos apenas com as demais
+unidades ativas.</p>
+<p class="check">A soma dos percentuais informados deve totalizar no máximo 100%. Se for inferior, o saldo
+remanescente será alocado na unidade geradora.</p>
+<p class="check">O percentual de alocação deve ser informado com no máximo duas casas decimais (ex.: 6,75%).</p>
+<p class="check">Se houver encerramento de contrato de qualquer unidade participante do sistema de
+compensação (incluindo migração para o Mercado Livre), os créditos de energia ativa
+remanescentes serão contabilizados em nome do titular da respectiva unidade por até 60 meses
+após a data do faturamento.</p>
+<p>Caso o titular possua outra unidade na mesma área de concessão, poderá transferir os créditos.</p>
+<p class="check">Qualquer alteração na configuração de alocação só será realizada mediante nova solicitação, que
+deve ser enviada com pelo menos 30 dias de antecedência. Essa responsabilidade é exclusiva do
+titular da unidade geradora ou seu representante formalmente designado.</p>
+<p class="check">O prazo de 30 dias refere-se à operacionalização do cadastro da alocação dos excedentes de
+energia. O impacto no faturamento pode ocorrer em um período maior, dependendo das datas de
+leitura e faturamento das unidades envolvidas.</p>
+<p class="check">Este documento cancela e substitui qualquer solicitação anterior relacionada à unidade geradora
+mencionada. Se houver uma alocação por prioridade em andamento, essa operação será
+interrompida, e o saldo residual será distribuído conforme definido nesta solicitação. Caso prefira
+direcionar esse saldo para uma unidade específica, basta informar o número da unidade aqui:
+$uc_saldo_residual.</p>
+<p class="check">Para consumidores do Grupo A com Opção de Faturamento no Grupo B, não é permitido o envio
+ou recebimento de excedentes de energia de unidade(s) distinta(s) de onde ocorreu a geração de
+energia elétrica. Se uma unidade com geração distribuída optar por este formulário, será
+considerada a desistência da opção de faturamento no Grupo B.</p>
+<p class="check">O saldo excedente recebido de outra unidade geradora não pode ser redistribuído para
+beneficiários.</p>
+<p class="check">A relação de beneficiários deve seguir as seguintes regras:</p>
+<ul class="bolinha">
+  <li><b>Autoconsumo remoto:</b> Todas as unidades beneficiárias devem estar sob a mesma titularidade
+  da unidade geradora, podendo incluir filiais da mesma empresa. A validação será feita pelo CPF
+  (pessoa física) ou pela raiz do CNPJ (pessoa jurídica).</li>
+  <li><b>Empreendimento com múltiplas unidades (condomínios) ou Geração Compartilhada:</b> São
+  permitidas titularidades distintas dentro da mesma área de concessão, desde que seja
+  apresentado um instrumento jurídico comprovando o compromisso de solidariedade entre os
+  participantes.</li>
+</ul>
+<p class="check junto">Qualquer divergência em relação aos itens acima invalida este documento.</p>
+
+<div class="bloco-final">
+<table class="titular">
+  <tr><td colspan="2">TITULAR DA UNIDADE CONSUMIDORA (NOME COMPLETO/RAZÃO SOCIAL)<span>$titular_nome</span></td></tr>
+  <tr><td>CPF<span>$titular_cpf</span></td><td>CNPJ<span>$titular_cnpj</span></td></tr>
+  <tr><td>E-MAIL<span>$email_1</span></td><td>E-MAIL<span>$email_2</span></td></tr>
+  <tr><td>TELEFONE RESIDENCIAL<span>$telefone_residencial</span></td><td>TELEFONE COMERCIAL<span>$telefone_comercial</span></td></tr>
+</table>
+
+<p class="data">$cidade, $dia de $mes de $ano.</p>
+
+<div class="assinatura">
+  <div class="linha">______________________________________________________</div>
+  <div class="rotulo">Assinatura (Titular ou Responsável formalmente autorizados)</div>
+</div>
+</div>
+
+<div class="instrucoes">
+  <p class="topo">Instruções para Documentações Complementares</p>
+  <p class="sub">Documento de Identificação:</p>
+  <div class="esp"></div>
+  <p class="sub">PESSOA FÍSICA:</p>
+  <div class="esp"></div>
+  <ul>
+    <li>Cópia de Documento de identificação oficial com foto;</li>
+    <li>Comprovante de inscrição do CPF (se não constar no documento de identificação com foto).</li>
+  </ul>
+  <div class="esp"></div>
+  <p class="sub">PESSOA JURÍDICA:</p>
+  <div class="esp"></div>
+  <ul>
+    <li>Cópia do Comprovante do cadastro nacional de pessoa jurídica (CNPJ).</li>
+    <li>Cópia do Documento relativo à constituição da pessoa jurídica e sua última alteração, se houver.</li>
+    <li>Carteira de identificação oficial com foto e comprovante de inscrição do CPF (se não constar no documento
+    de identificação com foto), dos representantes legais da pessoa Jurídica.</li>
+  </ul>
+  <div class="esp"></div><div class="esp"></div>
+  <p class="sub">Documentação específica por tipo de cliente/Compartilhamento:</p>
+  <div class="esp"></div>
+  <p class="grupo">AUTOCONSUMO REMOTO</p>
+  <div class="esp"></div>
+  <ul>
+    <li>Formulário preenchido e assinado;</li>
+    <li>Unidades sob a mesma titularidade.</li>
+  </ul>
+  <div class="esp"></div>
+  <p class="grupo">GERAÇÃO COMPARTILHADA (CONSÓRCIO/COOPERATIVA)</p>
+  <div class="esp"></div>
+  <p class="grupo">Consórcio Pessoa Jurídica (LEI 6.404/76)</p>
+  <div class="esp"></div>
+  <ul>
+    <li>Formulário preenchido e assinado;</li>
+    <li>Cópia de Certidão/Contrato de Consórcio na junta comercial ou órgão competente; (Aplica-se apenas nos
+    casos de Alteração de beneficiárias)</li>
+    <li>Cópia da ata onde conste cada unidade consumidora assinada pelo respectivo responsável ou outro
+    documento. (Aplica-se apenas nos casos de Alteração de beneficiárias)</li>
+  </ul>
+  <div class="esp"></div>
+  <p class="grupo">Consórcio Pessoa Física (LEI 11.795/2008)</p>
+  <div class="esp"></div>
+  <ul>
+    <li>Formulário preenchido e assinado;</li>
+    <li>Cópia do Contrato da Administradora do Consórcio (Pessoa Jurídica) com os Consorciados; (Aplica-se apenas
+    nos casos de Alteração de beneficiárias)</li>
+    <li>Cópia da ata onde conste cada unidade consumidora assinada pelo respectivo responsável ou outro
+    documento. (Aplica-se apenas nos casos de Alteração de beneficiárias)</li>
+  </ul>
+  <div class="esp"></div>
+  <p class="grupo">Cooperativa</p>
+  <div class="esp"></div>
+  <ul>
+    <li>Formulário preenchido e assinado;</li>
+    <li>Cópia simples do estatuto social e da ATA de eleição do(s) representante(s); (Aplica-se apenas nos casos de
+    Alteração de beneficiárias)</li>
+    <li>Cópia da ata onde consta cada unidade consumidora assinada pelo respectivo responsável. (Aplica-se apenas
+    nos casos de Alteração de beneficiárias)</li>
+  </ul>
+  <p class="grupo nova-pagina">EMPREENDIMENTO COM MÚLTIPLAS</p>
+  <div class="esp"></div>
+  <p class="grupo">Condomínios</p>
+  <div class="esp"></div>
+  <ul>
+    <li>Formulário preenchido e assinado;</li>
+    <li>Cópia simples do documento de constituição (estatuto social ou registro de instituição de condomínio).
+    (Aplica-se apenas nos casos de Alteração de beneficiárias)</li>
+    <li>Ata onde consta cada unidade consumidora assinada por cada proprietário (Aplica-se apenas nos casos de
+    Alteração de beneficiárias).</li>
+  </ul>
+</div>
+</body>
+</html>

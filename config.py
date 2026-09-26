@@ -17,6 +17,15 @@ API_ATUALIZAR_FATURA_DEV = os.getenv('API_ATUALIZAR_FATURA_DEV')
 API_ATUALIZAR_FATURA_PROD = os.getenv('API_ATUALIZAR_FATURA_PROD')
 GEUS_APIKEY = os.getenv('GEUS_APIKEY')
 
+# Titular impresso nos formulários de rateio (function/formulario_rateio.py)
+FORM_TITULAR_NOME = os.getenv('FORM_TITULAR_NOME', '')
+FORM_TITULAR_CNPJ = os.getenv('FORM_TITULAR_CNPJ', '')
+FORM_TITULAR_CPF = os.getenv('FORM_TITULAR_CPF', '')
+FORM_TITULAR_EMAIL_1 = os.getenv('FORM_TITULAR_EMAIL_1', '')
+FORM_TITULAR_EMAIL_2 = os.getenv('FORM_TITULAR_EMAIL_2', '')
+FORM_TITULAR_TELEFONE_RESIDENCIAL = os.getenv('FORM_TITULAR_TELEFONE_RESIDENCIAL', '')
+FORM_TITULAR_TELEFONE_COMERCIAL = os.getenv('FORM_TITULAR_TELEFONE_COMERCIAL', '')
+
 # Minutos de espera entre tentativas após falha de login, acesso negado ou
 # falhas repetidas de carregamento (retry longo).
 MINUTOS_ENTRE_TENTATIVAS = int(os.getenv('MINUTOS_ENTRE_TENTATIVAS', '30'))
