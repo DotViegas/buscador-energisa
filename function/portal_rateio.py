@@ -36,6 +36,44 @@ JS_HIT_COMBO = r"""e => { e.scrollIntoView({block: 'center'}); const r = e.getBo
   return !!(top && (ctrl.contains(top) || top.contains(e))) }"""
 
 
+# ==================== correção do bug da Finalização ====================
+# O JS da tela de confirmação desestrutura `numeroUcAneel: <var>` e depois usa
+# `numeroUCAneel` (que não existe) na lista de "Beneficiárias removidas": ReferenceError
+# e a tela quebra sempre que há removida (em Chrome, Edge e Firefox). Com a correção,
+# o robô troca, só no navegador dele, o nome errado pela variável certa. Os dados
+# enviados continuam sendo os que o portal monta; só a tela deixa de quebrar.
+CORRIGIR_BUG_FINALIZACAO = True
+CHUNK_CONFIRMACAO = "**/_next/static/chunks/pages/gerenciamento-gd/cadastro/confirmacao-beneficiaria-*.js"
+_contextos_corrigidos = set()
+
+
+def corrigir_codigo_confirmacao(codigo):
+    """Retorna (código, corrigido?). Sem o nome errado (Energisa corrigiu) devolve igual."""
+    posicao = codigo.find("numeroUCAneel")
+    if posicao < 0:
+        return codigo, False
+    declaracoes = list(re.finditer(r"numeroUcAneel:\s*([A-Za-z_$][\w$]*)", codigo[:posicao]))
+    if not declaracoes:
+        return codigo, False
+    return codigo.replace("numeroUCAneel", declaracoes[-1].group(1)), True
+
+
+def instalar_correcao_finalizacao(context):
+    """Aplica a correção ao JS da tela de confirmação neste contexto (uma vez por contexto)."""
+    if not CORRIGIR_BUG_FINALIZACAO or id(context) in _contextos_corrigidos:
+        return
+
+    def corrigir(route):
+        resposta = route.fetch()
+        codigo, corrigido = corrigir_codigo_confirmacao(resposta.text())
+        if corrigido:
+            print("   🩹 Tela de confirmação: corrigido o ReferenceError numeroUCAneel do portal")
+        route.fulfill(response=resposta, body=codigo)
+
+    context.route(CHUNK_CONFIRMACAO, corrigir)
+    _contextos_corrigidos.add(id(context))
+
+
 class RemocaoNecessaria(Exception):
     """A usina tem beneficiárias no portal que não estão na planilha."""
 
@@ -191,6 +229,23 @@ def _cards_visiveis(page):
 def _uc_do_card(card):
     m = re.search(r"Código do cliente\s*(\d{2}/\d{7}-\d)", card.inner_text())
     return m.group(1) if m else None
+
+
+def remover_imoveis(page, ucs):
+    """Etapa 2: clica em "Remover este imóvel" nas UCs que não estão na planilha (elas vão
+    para "Unidades que serão removidas"). Só faz sentido com a correção da Finalização."""
+    for uc in ucs:
+        botao = None
+        for card in (page.locator("div.mb-4.rounded-lg").filter(has=page.locator("input[type='number']"))
+                     .filter(has_text=f"Código do cliente {uc}")).all():
+            campo = card.locator("input[type='number']")
+            if campo.is_visible() and campo.evaluate(JS_HIT):
+                botao = card.get_by_role("button", name="Remover este imóvel").first
+                break
+        if botao is None:
+            raise PortalFalhou(f"card da UC {uc} não encontrado para remover")
+        botao.click()
+        time.sleep(0.8)
 
 
 def preencher_percentuais(page, rateio):

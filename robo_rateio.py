@@ -34,10 +34,14 @@ import robo_v2
 from function import portal_rateio as portal
 from function import rateio_lista
 from function.formulario_rateio import Beneficiaria, gerar_formulario, titular_padrao
+from function import navegador
 from function.navegador import fazer_login_com_retry, fechar_navegador, relogar
 from robo import AccessDeniedError, LogDuplo
 
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+# Perfil do Chrome só do rateio (o robo_v2 segue com o perfil_chrome/ e os cookies
+# dele). É apagado antes de cada login: toda execução começa sem nenhum cookie.
+PERFIL_RATEIO = os.path.join(PROJECT_DIR, "perfil_rateio")
 
 
 def slug_usina(nome):
@@ -141,6 +145,7 @@ def processar_usina(context, page, monitor, planilha, usina, docs, enviar, pasta
     resultado = {"usina": usina.nome, "uc_usina": uc_usina, "arquivos": []}
     numero_uc_usina, dados_ucs = "", {}
     try:
+        portal.instalar_correcao_finalizacao(context)
         robo_v2.checar_bloqueio(page, monitor)
         robo_v2.selecionar_uc(page, monitor, uc_usina)
         robo_v2.aguardar_saida_listagem(page, monitor, uc_usina)
@@ -163,7 +168,11 @@ def processar_usina(context, page, monitor, planilha, usina, docs, enviar, pasta
         ucs_portal = portal.ir_para_configuracao(page)
         remover = [uc for uc in ucs_portal if uc not in rateio]
         if remover:
-            raise portal.RemocaoNecessaria(remover)
+            if not portal.CORRIGIR_BUG_FINALIZACAO:
+                raise portal.RemocaoNecessaria(remover)
+            portal.remover_imoveis(page, remover)
+            resultado["removidas"] = remover
+            print(f"   ➖ {len(remover)} beneficiária(s) removida(s) no portal: {', '.join(remover)}")
         total = portal.preencher_percentuais(page, rateio)
         print(f"   🔢 Percentuais preenchidos: {total}")
         if not total.startswith("100"):
@@ -264,7 +273,9 @@ def main():
             print(f"\n🏭 {planilha.geradora} ({cnpj}) - {len(usinas)} usina(s)")
 
             with sync_playwright() as p:
-                context, page, monitor = fazer_login_com_retry(p, cnpj)
+                # Sessão totalmente nova: perfil próprio apagado antes do login.
+                navegador.PERFIL_DIR = PERFIL_RATEIO
+                context, page, monitor = fazer_login_com_retry(p, cnpj, manter_akamai_inicial=False)
                 try:
                     for usina in usinas:
                         print(f"\n⚡ {usina.nome} - {len(usina.beneficiarias)} beneficiária(s)")
