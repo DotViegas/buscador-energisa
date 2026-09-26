@@ -47,6 +47,23 @@ def slug_usina(nome):
     return re.sub(r"\W+", "_", f"{base} {numero}".strip()).strip("_")
 
 
+def sigla_usina(nome):
+    """Sigla usada nos PDFs de prova, no padrão dos arquivos do escritório:
+    'ENERGIA A 1' -> 'EA 01' (iniciais + nº com 2 dígitos); 'G114' -> 'G114'."""
+    m = re.match(r"(.*\S)\s+(\d+)$", nome.strip())  # número separado por espaço ("G114" não tem)
+    base, numero = (m.group(1), f"{int(m.group(2)):02d}") if m else (nome.strip(), "")
+    palavras = base.split()
+    sigla = "".join(p[0] for p in palavras).upper() if len(palavras) > 1 else base.upper()
+    return f"{sigla} {numero}".strip()
+
+
+def nome_prova(tipo, usina, quando, ensaio=False):
+    """'FORMULARIO ONLINE RATEIO EA 01 26_09_26.pdf' (tela de Finalização) ou
+    'PROTOC FORMULARIO ONLINE RATEIO EA 01 26_09_26.pdf' (tela do protocolo)."""
+    prefixo = "PROTOC FORMULARIO ONLINE RATEIO" if tipo == "protocolo" else "FORMULARIO ONLINE RATEIO"
+    return f"{prefixo} {sigla_usina(usina)} {quando:%d_%m_%y}{' ENSAIO' if ensaio else ''}.pdf"
+
+
 def cnpj_da_geradora(nome):
     from ea_manager import GERADORAS_NOMES
     for cnpj, apelido in GERADORAS_NOMES.items():
@@ -154,14 +171,14 @@ def processar_usina(context, page, monitor, planilha, usina, docs, enviar, pasta
 
         portal.enviar_documentos(page, docs)
         portal.abrir_finalizacao(page)
-        sufixo = "" if enviar else "_ENSAIO"
-        prova = portal.imprimir_pdf(context, page, os.path.join(pasta_saida, f"{slug_usina(usina.nome)}_finalizacao{sufixo}.pdf"))
+        prova = portal.imprimir_pdf(context, page, os.path.join(
+            pasta_saida, nome_prova("finalizacao", usina.nome, datetime.now(), ensaio=not enviar)))
         resultado["arquivos"].append(prova)
         if not enviar:
             resultado.update(situacao="portal_ensaio", detalhe="chegou à Finalização (não finalizado)")
             return resultado
 
-        caminho_protocolo = os.path.join(pasta_saida, f"{slug_usina(usina.nome)}_protocolo.pdf")
+        caminho_protocolo = os.path.join(pasta_saida, nome_prova("protocolo", usina.nome, datetime.now()))
         try:
             protocolo = portal.finalizar(page)
         except portal.EnvioIncerto as e:
