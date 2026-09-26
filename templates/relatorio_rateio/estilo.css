@@ -1,0 +1,90 @@
+/* Relatório de rateios - identidade ENERGIA A (mesma paleta do documento premium). */
+@font-face { font-family: "Poppins"; src: url("fonts/Poppins-Light.ttf"); font-weight: 300; }
+@font-face { font-family: "Poppins"; src: url("fonts/Poppins-Regular.ttf"); font-weight: 400; }
+@font-face { font-family: "Poppins"; src: url("fonts/Poppins-Medium.ttf"); font-weight: 500; }
+@font-face { font-family: "Poppins"; src: url("fonts/Poppins-SemiBold.ttf"); font-weight: 600; }
+@font-face { font-family: "Poppins"; src: url("fonts/Poppins-Bold.ttf"); font-weight: 700; }
+
+:root {
+  --navy: #0D182C; --navy2: #083054; --gold: #F2B705; --gold2: #F0A030;
+  --ink: #1B2430; --muted: #64748B; --line: #E4E9F0; --tint: #F6F8FB; --ok: #1F9D55;
+}
+
+@page {
+  size: A4; margin: 24mm 16mm 18mm 16mm;
+  @top-right { content: url("logo_hdr.png"); vertical-align: bottom; padding-bottom: 3mm; }
+  @bottom-left { content: string(rodape); font: 400 7pt "Poppins"; color: #94A3B8; letter-spacing: .02em; }
+  @bottom-right { content: counter(page); font: 700 8pt "Poppins"; color: var(--navy); }
+}
+@page capa { margin: 0; background: var(--navy); @top-right { content: none; } @bottom-left { content: none; } @bottom-right { content: none; } }
+
+html { font-family: "Poppins", sans-serif; font-size: 9pt; color: var(--ink); line-height: 1.45; }
+body { margin: 0; }
+h1, h2, h3 { color: var(--navy); margin: 0; }
+
+/* ---------- capa ---------- */
+.capa { page: capa; position: relative; height: 297mm; color: #fff; overflow: hidden;
+        background: radial-gradient(circle at 88% 8%, rgba(242,183,5,.28), transparent 34%),
+                    radial-gradient(circle at 8% 96%, rgba(20,64,110,.9), transparent 42%), var(--navy); }
+.capa .conteudo { position: absolute; left: 22mm; right: 22mm; top: 34mm; }
+.capa .logo { width: 52mm; }
+.capa .chip { display: table; margin-top: 22mm; padding: 1.6mm 4mm; border: .6pt solid var(--gold2);
+              border-radius: 3mm; color: var(--gold); font-size: 7pt; font-weight: 600; letter-spacing: .28em; }
+.capa .kicker { margin-top: 10mm; font-size: 14pt; font-weight: 300; color: #CBD5E1; }
+.capa h1 { color: #fff; font-size: 36pt; line-height: 1.08; font-weight: 700; margin-top: 2mm; }
+.capa h1 em { color: var(--gold); font-style: normal; }
+.capa .barra { width: 30mm; height: 1.6mm; background: var(--gold); border-radius: 1mm; margin: 8mm 0 7mm; }
+.capa .sub { font-size: 10.5pt; color: #CBD5E1; max-width: 150mm; }
+.capa .numeros { margin-top: 16mm; display: flex; gap: 5mm; }
+.capa .numero { flex: 1; border: .6pt solid rgba(255,255,255,.18); border-radius: 3mm; padding: 5mm 4mm; background: rgba(255,255,255,.04); }
+.capa .numero b { display: block; font-size: 22pt; font-weight: 700; color: var(--gold); line-height: 1.1; }
+.capa .numero span { font-size: 7.5pt; color: #CBD5E1; letter-spacing: .04em; }
+.capa .meta { position: absolute; left: 22mm; right: 22mm; bottom: 20mm; display: flex; gap: 8mm;
+              border-top: .6pt solid rgba(255,255,255,.18); padding-top: 5mm; }
+.capa .meta div { flex: 1; }
+.capa .meta small { display: block; font-size: 6.5pt; letter-spacing: .22em; color: #94A3B8; text-transform: uppercase; }
+.capa .meta p { margin: 1mm 0 0; font-size: 9pt; }
+
+/* ---------- títulos de seção ---------- */
+.secao { break-before: page; }
+.eyebrow { font-size: 7pt; font-weight: 600; letter-spacing: .26em; color: var(--gold2); text-transform: uppercase; }
+.titulo { font-size: 20pt; font-weight: 700; margin: 1mm 0 1.5mm; }
+.regra { height: .8pt; background: var(--line); margin: 3mm 0 6mm; }
+.regra::before { content: ""; display: block; width: 18mm; height: .8pt; background: var(--gold); }
+.intro { color: var(--muted); margin: 0 0 5mm; }
+
+/* ---------- tabelas ---------- */
+table { width: 100%; border-collapse: collapse; }
+thead { display: table-header-group; }
+th { background: var(--navy); color: #fff; font-size: 7pt; font-weight: 600; letter-spacing: .06em;
+     text-transform: uppercase; text-align: left; padding: 2.6mm 2.5mm; }
+th.num, td.num { text-align: right; }
+th.cen, td.cen { text-align: center; }
+td { padding: 1.7mm 2.5mm; border-bottom: .5pt solid var(--line); vertical-align: middle; }
+tr { break-inside: avoid; }
+tbody tr:nth-child(even) td { background: var(--tint); }
+tr.total td { background: var(--navy) !important; color: #fff; font-weight: 700; border: none; font-size: 9.5pt; }
+tr.total td.num { color: var(--gold); }
+td.pct { font-weight: 600; color: var(--navy); }
+.uc { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mini { font-size: 7pt; color: var(--muted); }
+
+.chip { display: inline-block; padding: .5mm 2.4mm; border-radius: 2mm; font-size: 6.8pt; font-weight: 600; white-space: nowrap; }
+.chip.ok { background: #E7F6EE; color: var(--ok); }
+.chip.alerta { background: #FEF3C7; color: #92400E; }
+.chip.erro { background: #FDE8E8; color: #B42318; }
+.chip.info { background: #E8EEF6; color: var(--navy2); }
+
+/* ---------- blocos ---------- */
+.cards { display: flex; gap: 3mm; margin: 0 0 6mm; }
+.card { flex: 1; border: .6pt solid var(--line); border-radius: 2.5mm; padding: 3mm 3.5mm; }
+.card small { display: block; font-size: 6.5pt; letter-spacing: .16em; color: var(--muted); text-transform: uppercase; }
+.card b { display: block; font-size: 11pt; color: var(--navy); margin-top: .8mm; }
+.nota { border-left: 1.2mm solid var(--gold); background: var(--tint); padding: 3mm 4mm; margin: 5mm 0 0; font-size: 8pt; }
+.nota b { color: var(--navy); }
+.removidas { margin-top: 4mm; font-size: 7pt; color: var(--muted); line-height: 1.55; }
+.removidas b { color: var(--ink); }
+h3.sub { font-size: 10pt; margin: 7mm 0 3mm; }
+
+.nw { white-space: nowrap; }
+.card b { white-space: nowrap; font-size: 10pt; }

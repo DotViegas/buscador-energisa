@@ -22,7 +22,7 @@ from rich.table import Table
 from rich.text import Text
 
 from database import DatabaseManager
-from function import rateio_lista
+from function import rateio_lista, relatorio_rateio
 from robo import geradoras_cnpjs
 
 load_dotenv()
@@ -125,6 +125,7 @@ OPCOES_MENU = [
     ("14", "Rateio: ver lista do mês (rateio/lista/AAAA-MM)"),
     ("15", "Rateio: rodar robô em ENSAIO (vai até a Finalização, não envia)"),
     ("16", "Rateio: rodar robô e ENVIAR (finaliza no portal)"),
+    ("17", "Rateio: relatório PDF dos rateios do mês"),
     ("0",  "Sair"),
 ]
 
@@ -913,6 +914,26 @@ def acao_rateio_enviar(console: Console) -> None:
     _executar_robo_rateio(console, enviar=True)
 
 
+def acao_rateio_relatorio(console: Console) -> None:
+    """Gera o PDF com o resumo dos rateios do mês e o demonstrativo de cada usina."""
+    mes = _escolher_mes_rateio(console)
+    if not mes:
+        return
+    if not relatorio_rateio.carregar_resultados(mes):
+        console.print(f"[yellow]⚠️ Nenhum resultado do robô em rateio/resultados/{mes}/ "
+                      "(rode a opção 15 ou 16 antes).[/yellow]")
+        return
+    console.print(f"\n[bold cyan]📄 Gerando relatório de {mes}...[/bold cyan]")
+    try:
+        caminho = relatorio_rateio.gerar_relatorio(mes)
+    except Exception as e:
+        console.print(f"[red]❌ Falha ao gerar o relatório: {e}[/red]")
+        return
+    console.print(f"[green]✅ Relatório salvo em {caminho}[/green]")
+    if input("Abrir o PDF agora? (S/n): ").strip().lower() in ("", "s", "sim") and hasattr(os, "startfile"):
+        os.startfile(caminho)
+
+
 # ==================== MAIN LOOP ====================
 
 ACOES = {
@@ -932,6 +953,7 @@ ACOES = {
     "14": acao_rateio_lista,
     "15": acao_rateio_ensaio,
     "16": acao_rateio_enviar,
+    "17": acao_rateio_relatorio,
 }
 
 
