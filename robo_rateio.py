@@ -38,7 +38,6 @@ from function.navegador import fazer_login_com_retry, fechar_navegador, relogar
 from robo import AccessDeniedError, LogDuplo
 
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
-ARQUIVO_USINAS = os.path.join(rateio_lista.PASTA_RATEIO, "usinas.json")
 
 
 def slug_usina(nome):
@@ -57,16 +56,11 @@ def cnpj_da_geradora(nome):
 
 
 def uc_da_usina(usina):
-    """UC (código do cliente) da usina: da planilha ou, enquanto ela não trouxer,
-    de rateio/usinas.json ({"ENERGIA A 1": "10/2562433-9", ...})."""
-    if usina.uc_geradora:
-        return usina.uc_geradora
-    if os.path.exists(ARQUIVO_USINAS):
-        with open(ARQUIVO_USINAS, encoding="utf-8") as f:
-            uc = json.load(f).get(usina.nome, "")
-        if uc:
-            return uc
-    raise ValueError(f"{usina.nome}: UC da usina não está na planilha nem em {ARQUIVO_USINAS}")
+    """UC (código do cliente) da usina, sempre lida da planilha (título do bloco,
+    coluna "UC da Usina" ou snapshot da aba Configuração MCP)."""
+    if not usina.uc_geradora:
+        raise ValueError(f"{usina.nome}: planilha sem a UC da usina")
+    return usina.uc_geradora
 
 
 def documentos(geradora):
@@ -236,7 +230,13 @@ def main():
             usinas = [u for u in planilha.usinas if not filtro or u.nome.upper() in filtro]
             if not usinas:
                 continue
-            erros_planilha = [a for a in planilha.avisos if "UC da usina" not in a]
+            # Bloqueiam os avisos gerais e os das usinas selecionadas - inclusive "UC da usina
+            # não informada": a planilha é a única fonte da UC de cada usina.
+            def da_usina(aviso, nomes):
+                return any(aviso.startswith(f"{n}:") for n in nomes)
+            erros_planilha = [a for a in planilha.avisos
+                              if da_usina(a, [u.nome for u in usinas])
+                              or not da_usina(a, [u.nome for u in planilha.usinas])]
             if erros_planilha:
                 print("❌ Planilha com problemas, corrija antes de rodar:\n   " + "\n   ".join(erros_planilha))
                 continue

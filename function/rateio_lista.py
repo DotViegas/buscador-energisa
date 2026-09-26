@@ -31,7 +31,9 @@ MARCADOR_BATERIA = "(bateria)"
 
 RE_UC = re.compile(r"\d{2}/\d{7}-\d")
 RE_MES = re.compile(r"^\d{4}-\d{2}$")
-RE_TITULO_USINA = re.compile(r"^(?P<nome>.+?)\s*\((?P<classe>GD\s*I{1,3})\)(?:.*?Capacidade:\s*(?P<cap>[\d.,]+))?")
+# "ENERGIA A 2 · UC 10/2562692-0  (GDI)  · Capacidade: 20,000 kWh" (a UC no título é opcional)
+RE_TITULO_USINA = re.compile(r"^(?P<nome>.+?)(?:\s*·\s*UC\s*\d{2}/\d{7}-\d)?\s*\((?P<classe>GD\s*I{1,3})\)"
+                             r"(?:.*?Capacidade:\s*(?P<cap>[\d.,]+))?")
 RE_NOME_ARQUIVO = re.compile(r"^rateio_(?P<geradora>.+?)_(?P<ano>\d{4})_(?P<mes>\d{2})", re.IGNORECASE)
 
 
