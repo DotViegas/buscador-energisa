@@ -123,6 +123,8 @@ OPCOES_MENU = [
     ("12", "Gerar relatório XLSX por intervalo"),
     ("13", "Resetar faturas com erro"),
     ("14", "Rateio: ver lista do mês (rateio/lista/AAAA-MM)"),
+    ("15", "Rateio: rodar robô em ENSAIO (vai até a Finalização, não envia)"),
+    ("16", "Rateio: rodar robô e ENVIAR (finaliza no portal)"),
     ("0",  "Sair"),
 ]
 
@@ -789,11 +791,12 @@ def _mostrar_usina_rateio(console: Console, usina) -> None:
     console.print(tabela)
 
 
-def acao_rateio_lista(console: Console) -> None:
+def _escolher_mes_rateio(console: Console):
+    """Mostra os meses de rateio/lista e devolve o escolhido (ou None)."""
     meses = rateio_lista.listar_meses()
     if not meses:
         console.print("[yellow]⚠️ Nenhuma pasta AAAA-MM em rateio/lista/.[/yellow]")
-        return
+        return None
 
     tabela = Table(title="📅 Meses de referência", border_style="cyan")
     tabela.add_column("#", style="bold cyan", justify="right")
@@ -815,6 +818,13 @@ def acao_rateio_lista(console: Console) -> None:
             raise IndexError
     except (ValueError, IndexError):
         console.print("[red]Entrada inválida.[/red]")
+        return None
+    return mes
+
+
+def acao_rateio_lista(console: Console) -> None:
+    mes = _escolher_mes_rateio(console)
+    if not mes:
         return
 
     planilhas = []
@@ -844,6 +854,65 @@ def acao_rateio_lista(console: Console) -> None:
                 console.print("[red]Número fora da lista.[/red]")
 
 
+def _executar_robo_rateio(console: Console, enviar: bool) -> None:
+    """Escolhe mês e usinas e roda o robo_rateio.py (ensaio ou envio) em subprocess."""
+    mes = _escolher_mes_rateio(console)
+    if not mes:
+        return
+    usinas = []
+    for caminho in rateio_lista.listar_planilhas(mes):
+        try:
+            usinas += [u.nome for u in rateio_lista.ler_planilha(caminho).usinas]
+        except Exception as e:
+            console.print(f"[red]❌ {os.path.basename(caminho)}: {e}[/red]")
+    if not usinas:
+        console.print(f"[yellow]⚠️ Nenhuma usina nas planilhas de rateio/lista/{mes}/.[/yellow]")
+        return
+
+    tabela = Table(title=f"⚡ Usinas de {mes}", border_style="cyan")
+    tabela.add_column("#", style="bold cyan", justify="right")
+    tabela.add_column("Usina", style="bold")
+    for i, nome in enumerate(usinas, 1):
+        tabela.add_row(str(i), nome)
+    console.print(tabela)
+    escolha = input("\nNúmeros das usinas separados por vírgula (ENTER = todas): ").strip()
+    selecionadas = []
+    if escolha:
+        try:
+            selecionadas = [usinas[int(n) - 1] for n in escolha.replace(" ", "").split(",") if int(n) >= 1]
+        except (ValueError, IndexError):
+            console.print("[red]Entrada inválida.[/red]")
+            return
+
+    alvo = ", ".join(selecionadas) if selecionadas else f"todas as {len(usinas)} usinas"
+    if enviar:
+        console.print(Panel(
+            f"O robô vai [bold]FINALIZAR[/bold] no portal da Energisa o rateio de {mes} para {alvo}.\n"
+            "A Energisa aceita só [bold]uma alteração por período de faturamento[/bold] por usina.\n"
+            "Usinas que exigem remoção de beneficiária continuam indo para o formulário.",
+            title="[bold red]⚠️ ENVIO REAL[/bold red]", border_style="red"))
+        if input("Digite ENVIAR para confirmar: ").strip() != "ENVIAR":
+            console.print("[yellow]Cancelado.[/yellow]")
+            return
+    else:
+        console.print(f"\n[bold cyan]🧪 Ensaio de {mes} para {alvo} (não finaliza nada)[/bold cyan]\n")
+
+    args = [sys.executable, "robo_rateio.py", "--mes", mes]
+    for nome in selecionadas:
+        args += ["--usina", nome]
+    if enviar:
+        args.append("--enviar")
+    subprocess.run(args, cwd=PROJECT_DIR)
+
+
+def acao_rateio_ensaio(console: Console) -> None:
+    _executar_robo_rateio(console, enviar=False)
+
+
+def acao_rateio_enviar(console: Console) -> None:
+    _executar_robo_rateio(console, enviar=True)
+
+
 # ==================== MAIN LOOP ====================
 
 ACOES = {
@@ -861,6 +930,8 @@ ACOES = {
     "12": acao_relatorio_intervalo,
     "13": acao_resetar_erros,
     "14": acao_rateio_lista,
+    "15": acao_rateio_ensaio,
+    "16": acao_rateio_enviar,
 }
 
 
