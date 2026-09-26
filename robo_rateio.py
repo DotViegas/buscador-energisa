@@ -169,16 +169,15 @@ def processar_usina(context, page, monitor, planilha, usina, docs, enviar, pasta
 
         caminho_protocolo = os.path.join(pasta_saida, f"{slug_usina(usina.nome)}_protocolo.pdf")
         try:
-            texto = portal.finalizar(page)
+            protocolo = portal.finalizar(page)
         except portal.EnvioIncerto as e:
             # Finalizar já foi clicado: não gerar formulário (seria alteração em dobro).
             resultado["arquivos"].append(portal.imprimir_pdf(context, page, caminho_protocolo))
             resultado.update(situacao="enviado_conferir",
                              detalhe=f"{e} - conferir no portal (Minhas solicitações) se foi registrado")
             return resultado
-        protocolo = portal.extrair_protocolo(texto)
         resultado["arquivos"].append(portal.imprimir_pdf(context, page, caminho_protocolo))
-        resultado.update(situacao="portal_enviado", detalhe=f"protocolo {protocolo or '(não identificado)'}")
+        resultado.update(situacao="portal_enviado", protocolo=protocolo, detalhe=f"protocolo {protocolo}")
         return resultado
 
     except (portal.RemocaoNecessaria, portal.PortalFalhou) as e:

@@ -13,9 +13,9 @@ Armadilhas do portal:
   Finalização quebra ("Application error", ReferenceError numeroUCAneel no JS da
   Energisa) sempre que há removida. Por isso usinas que exigem remoção não passam
   pelo portal: `RemocaoNecessaria` sinaliza para o robô gerar o formulário.
-- Checkbox "Li e estou de acordo", botão "Finalizar" e a tela do protocolo nunca
-  foram exercitados (o teste parou antes de finalizar): seletores a validar no
-  primeiro envio real.
+- Checkbox "Li e estou de acordo" e botão "Finalizar" aparecem na prova da etapa 4
+  (ensaio de 26/09/2026); a tela do protocolo é conhecida por um PDF de envio manual
+  (25/08/2026). O clique em ambos ainda não rodou pelo robô: conferir no 1º envio.
 """
 import base64
 import re
@@ -267,23 +267,33 @@ class EnvioIncerto(Exception):
     solicitação PODE ter sido registrada: nunca gerar formulário nesse caso."""
 
 
+# Tela de protocolo (PDF de um envio real de 25/08/2026, ENERGIA A 1): URL
+# /gerenciamento-gd/cadastro/protocolo, "Recebemos a sua solicitação de cadastro de
+# beneficiárias" e o número (ex. 9547494683) DENTRO de um <input> abaixo de "Seu
+# protocolo é" - por isso não aparece no innerText (lá, depois de "Seu protocolo é",
+# vem "Prazo para retorno ... 25/08/2026").
+JS_PROTOCOLO = r"""() => { const v = Array.from(document.querySelectorAll('input'))
+  .map(i => (i.value || '').trim()).find(v => /^\d{6,}$/.test(v)); return v || '' }"""
+
+
 def finalizar(page):
-    """Aceite + Finalizar + espera o protocolo. NÃO VALIDADO ao vivo: conferir no 1º envio.
+    """Aceite + Finalizar + espera a tela do protocolo. Retorna o número do protocolo.
 
     Falha ANTES do clique em Finalizar levanta PortalFalhou (nada foi enviado).
-    Depois do clique, levanta EnvioIncerto. Retorna o texto da tela do protocolo."""
+    Depois do clique, levanta EnvioIncerto (a solicitação pode ter sido registrada)."""
     clicar(page.get_by_text(re.compile("Li e estou de acordo")))
     botao = page.get_by_role("button", name="Finalizar")
     botao.first.wait_for(state="attached", timeout=15000)
     clicar(botao)
     try:
-        page.wait_for_function("() => /protocolo/i.test(document.body.innerText)", timeout=90000)
+        page.wait_for_function(
+            "() => location.pathname.includes('/cadastro/protocolo')"
+            " || document.body.innerText.includes('Recebemos a sua solicitação')", timeout=90000)
     except TIMEOUT_ERRORS:
         raise EnvioIncerto(f"Finalizar clicado, mas a tela do protocolo não apareceu (URL {page.url})")
-    time.sleep(3)
-    return page.evaluate("document.body.innerText")
-
-
-def extrair_protocolo(texto):
-    m = re.search(r"protocolo[^\d]{0,40}(\d[\d./-]{4,})", texto, re.IGNORECASE)
-    return m.group(1) if m else ""
+    try:
+        page.wait_for_function(JS_PROTOCOLO, timeout=30000)  # o input é preenchido depois
+    except TIMEOUT_ERRORS:
+        raise EnvioIncerto("tela do protocolo aberta, mas o número do protocolo não apareceu")
+    time.sleep(2)
+    return page.evaluate(JS_PROTOCOLO)
