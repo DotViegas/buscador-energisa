@@ -167,10 +167,17 @@ def processar_usina(context, page, monitor, planilha, usina, docs, enviar, pasta
             resultado.update(situacao="portal_ensaio", detalhe="chegou à Finalização (não finalizado)")
             return resultado
 
-        texto = portal.finalizar(page)
+        caminho_protocolo = os.path.join(pasta_saida, f"{slug_usina(usina.nome)}_protocolo.pdf")
+        try:
+            texto = portal.finalizar(page)
+        except portal.EnvioIncerto as e:
+            # Finalizar já foi clicado: não gerar formulário (seria alteração em dobro).
+            resultado["arquivos"].append(portal.imprimir_pdf(context, page, caminho_protocolo))
+            resultado.update(situacao="enviado_conferir",
+                             detalhe=f"{e} - conferir no portal (Minhas solicitações) se foi registrado")
+            return resultado
         protocolo = portal.extrair_protocolo(texto)
-        resultado["arquivos"].append(portal.imprimir_pdf(
-            context, page, os.path.join(pasta_saida, f"{slug_usina(usina.nome)}_protocolo.pdf")))
+        resultado["arquivos"].append(portal.imprimir_pdf(context, page, caminho_protocolo))
         resultado.update(situacao="portal_enviado", detalhe=f"protocolo {protocolo or '(não identificado)'}")
         return resultado
 
@@ -187,7 +194,8 @@ def processar_usina(context, page, monitor, planilha, usina, docs, enviar, pasta
 
 def imprimir_resumo(resultados, enviar):
     print(f"\n{'=' * 80}\n📊 RESUMO DO RATEIO ({'ENVIO' if enviar else 'ENSAIO'})\n{'=' * 80}")
-    icones = {"portal_ensaio": "🧪", "portal_enviado": "✅", "formulario": "📄", "erro": "❌"}
+    icones = {"portal_ensaio": "🧪", "portal_enviado": "✅", "enviado_conferir": "⚠️",
+              "formulario": "📄", "erro": "❌"}
     for r in resultados:
         print(f"{icones.get(r['situacao'], '?')} {r['usina']:14} {r['situacao']:15} {r.get('detalhe', '')}")
         for ajuste in r.get("ajustes", []):

@@ -262,9 +262,16 @@ def abrir_finalizacao(page):
         raise PortalFalhou("a tela de Finalização quebrou (Application error do portal)")
 
 
+class EnvioIncerto(Exception):
+    """O clique em Finalizar aconteceu, mas a tela seguinte não é a esperada. A
+    solicitação PODE ter sido registrada: nunca gerar formulário nesse caso."""
+
+
 def finalizar(page):
     """Aceite + Finalizar + espera o protocolo. NÃO VALIDADO ao vivo: conferir no 1º envio.
-    Retorna o texto da tela do protocolo."""
+
+    Falha ANTES do clique em Finalizar levanta PortalFalhou (nada foi enviado).
+    Depois do clique, levanta EnvioIncerto. Retorna o texto da tela do protocolo."""
     clicar(page.get_by_text(re.compile("Li e estou de acordo")))
     botao = page.get_by_role("button", name="Finalizar")
     botao.first.wait_for(state="attached", timeout=15000)
@@ -272,7 +279,7 @@ def finalizar(page):
     try:
         page.wait_for_function("() => /protocolo/i.test(document.body.innerText)", timeout=90000)
     except TIMEOUT_ERRORS:
-        raise PortalFalhou(f"a tela do protocolo não apareceu após Finalizar (URL {page.url})")
+        raise EnvioIncerto(f"Finalizar clicado, mas a tela do protocolo não apareceu (URL {page.url})")
     time.sleep(3)
     return page.evaluate("document.body.innerText")
 
