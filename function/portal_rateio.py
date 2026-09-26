@@ -233,19 +233,32 @@ def enviar_documentos(page, docs):
     esperar_texto(page, "Qual documento você quer usar?")
 
     clicar(page.get_by_test_id(f"tipo-documento-{docs['tipo']}"))
-    esperar_texto(page, "Envie a foto da frente")
-    _enviar_foto(page, docs["frente"], "Verifique se a foto possui")
+    # RG validado ao vivo ("Envie a foto da frente..."); o texto da tela da CNH não foi
+    # visto, então espera só o botão de envio de arquivo.
+    esperar_texto(page, "Buscar em seus arquivos")
+    _enviar_foto(page, docs["frente"])
     if docs["tipo"] == "RG":
         clicar(page.get_by_role("button", name="Avançar"))
         esperar_texto(page, "Envie a foto do verso")
-        _enviar_foto(page, docs["verso"], "Verifique se a foto possui")
+        _enviar_foto(page, docs["verso"])
 
 
-def _enviar_foto(page, caminho, texto_previa):
+TEXTOS_PREVIA = ("Verifique se a foto possui", "A foto ficou boa")
+
+
+def _enviar_foto(page, caminho, texto_previa=None):
+    """Envia o arquivo por 'Buscar em seus arquivos' e espera a tela de prévia."""
     with page.expect_file_chooser(timeout=15000) as escolha:
         clicar(page.get_by_text("Buscar em seus arquivos"))
     escolha.value.set_files(caminho)
-    esperar_texto(page, texto_previa)
+    if texto_previa:
+        esperar_texto(page, texto_previa)
+        return
+    try:
+        page.wait_for_function("ts => ts.some(t => document.body.innerText.includes(t))",
+                               arg=list(TEXTOS_PREVIA), timeout=45000)
+    except TIMEOUT_ERRORS:
+        raise PortalFalhou(f"prévia do arquivo {caminho} não apareceu (URL {page.url})")
 
 
 def abrir_finalizacao(page):
