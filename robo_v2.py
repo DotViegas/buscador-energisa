@@ -25,8 +25,9 @@ from robo import (
     _pausa, _pausa_entre_ucs, _digitar,
 )
 from function.navegador import (
-    ESTATISTICAS, esperar, fechar_navegador, fazer_login_com_retry, relogar,
+    ESTADO, ESTATISTICAS, esperar, fechar_navegador, fazer_login_com_retry, relogar,
 )
+from config import LIMITE_UCS_POR_COOKIE
 from function.erros_navegador import TIMEOUT_ERRORS
 from function.tarefa import processar_faturas_do_json
 from function.buscar_dados_api import buscar_faturas, criar_json_filtrado_por_status
@@ -38,6 +39,7 @@ MAX_TENTATIVAS_UC = 3
 MAX_RELOGINS_SUCESSO_FALSO = 2  # após isso, UCs sem correspondência são tratadas como mal cadastradas
 
 HISTORICO_SESSOES = []
+EXECUCAO = {"ja_logou": False}
 
 
 class BloqueioDuranteFaturas(AccessDeniedError):
@@ -247,7 +249,12 @@ def processar_geradora(p, cnpj, force=False, reprocessar_tudo=False):
     itens = list(dados["lista_ucs"].items())
     print(f"📋 UCs a processar: {len(itens)} | 📊 Faturas: {sum(len(f) for _, f in itens)}")
 
-    context, page, monitor = fazer_login_com_retry(p, cnpj)
+    # 1º login da execução sempre com perfil novo: o perfil que sobrou pode trazer
+    # cookies do Akamai punidos (ou de outro IP); nas trocas de geradora seguintes
+    # o cookie é mantido e a cota continua sendo contada.
+    primeiro = not EXECUCAO["ja_logou"]
+    context, page, monitor = fazer_login_com_retry(p, cnpj, manter_akamai_inicial=not primeiro)
+    EXECUCAO["ja_logou"] = True
     sessao = Sessao(cnpj)
 
     def novo_login(motivo, imediato):
@@ -281,6 +288,12 @@ def processar_geradora(p, cnpj, force=False, reprocessar_tudo=False):
             tentativa, sucesso, avancar = 0, False, True
             while True:
                 tentativa += 1
+                if ESTADO["ucs_no_cookie"] >= LIMITE_UCS_POR_COOKIE:
+                    print(f"♻️ {ESTADO['ucs_no_cookie']} UCs com este cookie do Akamai (cota ~62-65) - "
+                          "trocando de perfil antes do Access Denied")
+                    ESTATISTICAS["trocas_preventivas"] = ESTATISTICAS.get("trocas_preventivas", 0) + 1
+                    novo_login("Troca preventiva de perfil", imediato=True)
+                ESTADO["ucs_no_cookie"] += 1
                 try:
                     ok, erro = processar_uc(page, monitor, cnpj, nova_uc, pendentes, force_uc, reprocessar_tudo)
                     sessao.registrar_uc(ok, erro)
@@ -383,7 +396,7 @@ def imprimir_resumo(inicio):
         print(f"UCs por sessão até o Access Denied (média): {media:.1f}")
     print(f"Logins ok: {ESTATISTICAS['logins_ok']} | Logins falhos: {ESTATISTICAS['logins_falhos']} | "
           f"403 no /api/auth: {ESTATISTICAS['auth_403']} | Access Denied: {ESTATISTICAS.get('access_denied', 0)} | "
-          f"Chrome caiu: {ESTATISTICAS.get('navegador_caiu', 0)} | Minutos em espera: {ESTATISTICAS['minutos_espera']}")
+          f"Chrome caiu: {ESTATISTICAS.get('navegador_caiu', 0)} | Trocas preventivas: {ESTATISTICAS.get('trocas_preventivas', 0)} | Minutos em espera: {ESTATISTICAS['minutos_espera']}")
     print(f"Duração total: {(datetime.now() - inicio).total_seconds() / 60:.1f} min")
 
 

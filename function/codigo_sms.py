@@ -7,35 +7,64 @@ from datetime import datetime
 from config import EMAIL_LOGIN, EMAIL_PASSWORD, SERVER_HOST
 
 
-def obter_codigo_email():
+def _conectar_inbox():
+    mail = imaplib.IMAP4_SSL(SERVER_HOST)
+    mail.login(EMAIL_LOGIN, EMAIL_PASSWORD)
+    mail.select("inbox")
+    return mail
+
+
+def _ids_emails_sms(mail):
+    """IDs (em ordem crescente) dos emails com qualquer um dos assuntos aceitos (5204809 ou 28115)."""
+    _, messages = mail.search(
+        None,
+        'OR SUBJECT "BuscaSMSEnergisa - SMS do 5204809 (Energisa)" '
+        'SUBJECT "BuscaSMSEnergisa - SMS da Energisa (28115)"'
+    )
+    return messages[0].split() if messages[0] else []
+
+
+def ultimo_id_email_sms():
+    """ID do email de SMS mais recente já na caixa (0 se não houver ou der erro).
+
+    Chamar ANTES de pedir o SMS e passar o resultado em obter_codigo_email(apos_id=...):
+    assim só vale um email que chegou depois do pedido, sem depender do relógio do PC.
+    Em 28/09/2026 o relógio do PC novo estava 1h atrasado, os emails pareciam "do futuro",
+    passavam no filtro de 30s e o robô reusou o código do login anterior.
+    """
     try:
-        # Conectar ao Gmail
-        mail = imaplib.IMAP4_SSL(SERVER_HOST)
-        mail.login(EMAIL_LOGIN, EMAIL_PASSWORD)
-        mail.select("inbox")
-        
-        # Buscar emails com qualquer um dos assuntos aceitos (5204809 ou 28115)
-        _, messages = mail.search(
-            None,
-            'OR SUBJECT "BuscaSMSEnergisa - SMS do 5204809 (Energisa)" '
-            'SUBJECT "BuscaSMSEnergisa - SMS da Energisa (28115)"'
-        )
-        
-        if not messages[0]:
+        mail = _conectar_inbox()
+        ids = _ids_emails_sms(mail)
+        mail.logout()
+        return int(ids[-1]) if ids else 0
+    except Exception as e:
+        print(f"⚠️ Não foi possível ler o último email de SMS: {e}")
+        return 0
+
+
+def obter_codigo_email(apos_id=None):
+    try:
+        mail = _conectar_inbox()
+        ids = _ids_emails_sms(mail)
+        if apos_id is not None:
+            ids = [i for i in ids if int(i) > apos_id]
+
+        if not ids:
             return None
-            
+
         # Pegar o ID do email mais recente
-        latest_email_id = messages[0].split()[-1]
-        
+        latest_email_id = ids[-1]
+
         # Buscar o conteúdo do email
         _, msg_data = mail.fetch(latest_email_id, "(RFC822)")
         email_body = msg_data[0][1]
         email_message = email.message_from_bytes(email_body)
-        
-        # Verificar se o email é recente (últimos 30 segundos)
-        email_date = email.utils.parsedate_to_datetime(email_message['Date'])
-        if (datetime.now(email_date.tzinfo) - email_date).total_seconds() > 30:
-            return None
+
+        # Sem apos_id: aceita só email recente (últimos 30 segundos) - depende do relógio do PC
+        if apos_id is None:
+            email_date = email.utils.parsedate_to_datetime(email_message['Date'])
+            if (datetime.now(email_date.tzinfo) - email_date).total_seconds() > 30:
+                return None
         
         # Extrair o código do corpo do email
         for part in email_message.walk():
@@ -56,10 +85,11 @@ def obter_codigo_email():
         traceback.print_exc()
         return None
 
-def obter_codigo_email_com_reenvio_automatico(page, timeout):
+def obter_codigo_email_com_reenvio_automatico(page, timeout, apos_id=None):
     """
     Aguarda o código de email com sistema de reenvio automático.
     Clica no botão "REENVIAR CÓDIGO" a cada 180 segundos para garantir o envio do SMS.
+    apos_id: ver ultimo_id_email_sms().
     """
     import time
     
@@ -85,7 +115,7 @@ def obter_codigo_email_com_reenvio_automatico(page, timeout):
                     ultimo_reenvio = tempo_atual  # Atualiza o tempo para evitar tentativas consecutivas
             
             # Tentar obter o código do email
-            codigo = obter_codigo_email()
+            codigo = obter_codigo_email(apos_id)
             if codigo:
                 print(f"✅ Código recebido: {codigo}")
                 return codigo

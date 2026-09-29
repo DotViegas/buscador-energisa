@@ -30,6 +30,10 @@ FORM_TITULAR_TELEFONE_COMERCIAL = os.getenv('FORM_TITULAR_TELEFONE_COMERCIAL', '
 # falhas repetidas de carregamento (retry longo).
 MINUTOS_ENTRE_TENTATIVAS = int(os.getenv('MINUTOS_ENTRE_TENTATIVAS', '30'))
 
+# UCs por cookie do Akamai antes de trocar o perfil (relogin preventivo). A cota
+# observada é de 62-65 UCs por cookie; trocar antes evita o Access Denied.
+LIMITE_UCS_POR_COOKIE = int(os.getenv('LIMITE_UCS_POR_COOKIE', '55'))
+
 # --- Humanização do scraping (comportamento menos robótico) ---
 # HUMANIZAR=False desliga tudo e volta ao comportamento antigo (sleeps fixos, fill direto).
 HUMANIZAR = os.getenv('HUMANIZAR', 'True').lower() in ('true', '1', 'yes')

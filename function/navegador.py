@@ -16,9 +16,10 @@ import shutil
 import random
 import time
 from datetime import datetime
+from urllib.parse import urlparse
 
 from config import MINUTOS_ENTRE_TENTATIVAS
-from function.codigo_sms import obter_codigo_email_com_reenvio_automatico
+from function.codigo_sms import obter_codigo_email_com_reenvio_automatico, ultimo_id_email_sms
 from function.erros_navegador import TIMEOUT_ERRORS
 from robo import aguardar_antes_de_retentar, _pausa, _digitar
 
@@ -27,12 +28,29 @@ DOMINIO = "servicos.energisa.com.br"
 PERFIL_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "perfil_chrome")
 BOTAO_TELEFONE = "ícone de um celular azul 67*****2038"
 PREFIXOS_COOKIE_AKAMAI = ("_abck", "bm_", "ak_bmsc")
+ORIGEM_PORTAL = "https://servicos.energisa.com.br"
+# Tudo menos cookies (esses são tratados à parte, para preservar os do Akamai).
+STORAGE_PORTAL = "local_storage,indexeddb,cache_storage,service_workers,websql,file_systems"
 
 MAX_ENVIOS_CNPJ = 4
 ESPERA_TELEFONE_S = 20
+# Logins que deram certo tiveram no máximo 2 respostas 403 seguidas (padrão
+# "403, 403, sem resposta, aceito"); os que falharam tiveram 4. Com 3 seguidas o
+# IP está punido: insistir só aumenta a punição (28/09/2026).
+MAX_403_SEGUIDOS = 3
+MINUTOS_ESPERA_MAX = 120
 
 # Contadores da execução inteira, lidos no resumo final do robo_v2.
 ESTATISTICAS = {"logins_ok": 0, "logins_falhos": 0, "auth_403": 0, "minutos_espera": 0}
+# ucs_no_cookie: UCs consultadas com o cookie atual do Akamai (zera com perfil novo);
+# a cota observada é de 62-65 UCs por cookie (17 de 17 casos, 25-28/09/2026).
+# falhas_seguidas: esperas longas desde o último login bom (espera crescente).
+ESTADO = {"ucs_no_cookie": 0, "falhas_seguidas": 0}
+
+
+class IpPunidoError(Exception):
+    """O /api/auth recusou o CNPJ várias vezes seguidas: a punição é do IP, não
+    do perfil - tentar de novo na hora, mesmo com perfil novo, só piora."""
 
 
 class MonitorRespostas:
@@ -72,9 +90,12 @@ class MonitorRespostas:
 
 
 def esperar(motivo):
-    """Espera longa entre tentativas (MINUTOS_ENTRE_TENTATIVAS), contabilizada."""
-    ESTATISTICAS["minutos_espera"] += MINUTOS_ENTRE_TENTATIVAS
-    aguardar_antes_de_retentar(motivo=motivo)
+    """Espera longa e crescente entre tentativas: MINUTOS_ENTRE_TENTATIVAS × falhas
+    seguidas (30, 60, 90...), até MINUTOS_ESPERA_MAX. Zera no próximo login bom."""
+    ESTADO["falhas_seguidas"] += 1
+    minutos = min(MINUTOS_ENTRE_TENTATIVAS * ESTADO["falhas_seguidas"], MINUTOS_ESPERA_MAX)
+    ESTATISTICAS["minutos_espera"] += minutos
+    aguardar_antes_de_retentar(minutos=minutos, motivo=motivo)
 
 
 def fechar_navegador(context):
@@ -122,6 +143,7 @@ def _resetar_perfil():
     abrir na hora (verificado em 25/09/2026)."""
     _salvar_crash_dumps()
     shutil.rmtree(PERFIL_DIR, ignore_errors=True)
+    ESTADO["ucs_no_cookie"] = 0
     print("🗑️ Perfil do Chrome apagado (recomeçando sem cookies do Akamai)")
 
 
@@ -139,7 +161,7 @@ def _abrir_navegador(p):
     )
 
 
-def _limpar_sessao(context, page, manter_akamai):
+def _limpar_sessao(context, page, manter_akamai, origem=ORIGEM_PORTAL):
     """Apaga cookies e storage do portal para trocar de geradora sem herdar a
     sessão anterior. Com manter_akamai=True preserva os cookies do Akamai."""
     manter = []
@@ -148,8 +170,18 @@ def _limpar_sessao(context, page, manter_akamai):
     context.clear_cookies()
     if manter:
         context.add_cookies(manter)
+    # Storage do portal apagado pelo navegador (CDP), não pela página: com o
+    # portal logado, /login redireciona sozinho para /home e o evaluate falhava
+    # em silêncio no meio do redirecionamento - o robô abria já logado
+    # (28/09/2026, perfil que sobrou de um Chrome derrubado).
     try:
-        page.evaluate("() => { localStorage.clear(); sessionStorage.clear(); }")
+        cdp = context.new_cdp_session(page)
+        cdp.send("Storage.clearDataForOrigin", {"origin": origem, "storageTypes": STORAGE_PORTAL})
+        cdp.detach()
+    except Exception as e:
+        print(f"⚠️ Não foi possível limpar o storage do portal via CDP: {str(e).splitlines()[0]}")
+    try:
+        page.evaluate("() => sessionStorage.clear()")
     except Exception:
         pass
     print(f"🧹 Sessão limpa ({'mantendo' if manter_akamai else 'SEM'} cookies do Akamai: {len(manter)})")
@@ -183,7 +215,12 @@ def _aguardar_resultado_cnpj(page, monitor, auth_antes):
 
 
 def _enviar_cnpj(page, monitor, cnpj):
-    """Preenche o CNPJ e clica em Entrar até a tela de telefone aparecer."""
+    """Preenche o CNPJ e clica em Entrar até a tela de telefone aparecer.
+
+    Raises:
+        IpPunidoError: MAX_403_SEGUIDOS recusas seguidas no /api/auth.
+    """
+    recusas_seguidas = 0
     for envio in range(1, MAX_ENVIOS_CNPJ + 1):
         campo = page.get_by_role("textbox", name="Digite o seu CPF ou CNPJ")
         try:
@@ -206,7 +243,20 @@ def _enviar_cnpj(page, monitor, cnpj):
             return
         print(f"⚠️ Envio {envio}/{MAX_ENVIOS_CNPJ} do CNPJ não avançou "
               f"({'403 no /api/auth' if resultado == '403' else f'sem resposta em {ESPERA_TELEFONE_S}s'})")
+        recusas_seguidas = recusas_seguidas + 1 if resultado == "403" else 0
+        if recusas_seguidas >= MAX_403_SEGUIDOS:
+            raise IpPunidoError(f"{recusas_seguidas} recusas seguidas no /api/auth - IP provavelmente punido "
+                                f"(/api/auth: {monitor.status_auth})")
         time.sleep(random.uniform(3, 6))
+    # O aceite (200) às vezes chega depois do prazo do último envio: dar uma folga
+    # antes de desistir (28/09/2026: 200 chegou tarde e o robô entrou na espera).
+    if monitor.status_auth and monitor.status_auth[-1] == 200:
+        try:
+            page.locator("button:has-text('67')").first.wait_for(state="visible", timeout=20000)
+            print("✅ CNPJ aceito (resposta do portal chegou depois do último envio)")
+            return
+        except TIMEOUT_ERRORS:
+            pass
     raise Exception(f"CNPJ não avançou após {MAX_ENVIOS_CNPJ} envios (/api/auth: {monitor.status_auth})")
 
 
@@ -225,35 +275,49 @@ def fazer_login(p, cnpj, manter_akamai=True):
         monitor = MonitorRespostas()
         context.on("response", monitor)
 
-        page.goto(URL_LOGIN, wait_until="load", timeout=60000)
+        # Limpa ANTES do 1º acesso: cookies/sessão antigos nunca chegam ao portal.
         _limpar_sessao(context, page, manter_akamai)
         page.goto(URL_LOGIN, wait_until="load", timeout=60000)
         _pausa(4)
+        if urlparse(page.url).path.rstrip("/") != "/login":
+            # Ainda logado (/home, /login/listagem-ucs...): falhar já, para a próxima tentativa vir com perfil novo.
+            raise Exception(f"Portal continuou logado após limpar a sessão (URL: {page.url})")
         mexer_mouse(page)
 
         print("✏️ Preenchendo CNPJ...")
         _enviar_cnpj(page, monitor, cnpj)
         chamadas_antes = len(monitor.chamadas_api)
+        email_antes = ultimo_id_email_sms()
         page.get_by_role("button", name=BOTAO_TELEFONE).click()
         time.sleep(6)
         print("📨 Respostas do portal ao pedido de SMS:")
         for status, metodo, caminho, corpo in monitor.chamadas_api[chamadas_antes:] or [("-", "-", "nenhuma chamada /api/ capturada", "")]:
             print(f"   {status} {metodo} {caminho} {corpo!r}")
 
-        codigo = obter_codigo_email_com_reenvio_automatico(page, 600)
+        codigo = obter_codigo_email_com_reenvio_automatico(page, 600, apos_id=email_antes)
         if not codigo or len(codigo) < 4:
             raise Exception("Não foi possível obter o código de verificação")
 
-        page.get_by_role("textbox", name="Dígito 1 do código").wait_for(state="visible", timeout=10000)
+        primeiro_digito = page.get_by_role("textbox", name="Dígito 1 do código")
+        primeiro_digito.wait_for(state="visible", timeout=10000)
         for posicao, digito in enumerate(codigo[:4], 1):
             campo = page.get_by_role("textbox", name=f"Dígito {posicao} do código")
             campo.click()
             campo.fill(digito)
             _pausa(0.4)
 
-        time.sleep(10)
+        # Código aceito = o portal sai da tela do código. Se os campos continuam
+        # lá, o código foi recusado (antes o robô declarava sucesso mesmo assim).
+        try:
+            primeiro_digito.wait_for(state="hidden", timeout=30000)
+        except TIMEOUT_ERRORS:
+            raise Exception(f"Portal não aceitou o código {codigo} (tela do código ainda aberta após 30s)")
+        time.sleep(5)
         monitor.login_ok = True
         ESTATISTICAS["logins_ok"] += 1
+        ESTADO["falhas_seguidas"] = 0
+        if manter_akamai:
+            ESTADO["ucs_no_cookie"] += 1  # um login a mais no mesmo cookie também gasta a cota
         print("✅ Login feito com sucesso!")
         return context, page, monitor
     except Exception as e:
@@ -272,8 +336,10 @@ def fazer_login_com_retry(p, cnpj, manter_akamai_inicial=True):
     """Tenta logar até conseguir, esperando MINUTOS_ENTRE_TENTATIVAS entre falhas.
 
     A 1ª tentativa preserva os cookies do Akamai (se manter_akamai_inicial). Se
-    ela falhar, o perfil pode estar bloqueado: a 2ª vem na hora, com perfil novo.
-    Daí em diante, espera longa entre tentativas, sempre com perfil novo.
+    ela falhar - inclusive com 403 seguidos - o problema pode ser só o cookie:
+    a 2ª vem na hora, com perfil novo (28/09/2026: cookie mantido com ~38 UCs de
+    cota levou 3×403 enquanto perfis novos no mesmo IP passavam). Com perfil novo
+    recusado, o IP está punido: espera longa e crescente entre as tentativas.
     """
     tentativa = 0
     while True:
@@ -282,19 +348,23 @@ def fazer_login_com_retry(p, cnpj, manter_akamai_inicial=True):
         print(f"\n{'=' * 80}\n🔐 TENTATIVA DE LOGIN #{tentativa} - {datetime.now():%d/%m/%Y %H:%M:%S}\n{'=' * 80}\n")
         try:
             return fazer_login(p, cnpj, manter_akamai=manter)
-        except Exception:
+        except Exception as e:
             if manter:
-                print("↪️ Falhou com o perfil atual - tentando já com perfil novo")
+                print("↪️ Falhou com o cookie mantido - tentando já com perfil novo")
                 continue
-            esperar(f"Falha no login (tentativa {tentativa})")
+            if isinstance(e, IpPunidoError):
+                esperar(f"IP punido pelo Akamai (tentativa {tentativa})")
+            else:
+                esperar(f"Falha no login (tentativa {tentativa})")
 
 
 def relogar(p, cnpj, context):
-    """Relogin após bloqueio: na hora e com perfil novo (os cookies do Akamai
-    da sessão bloqueada mantêm o bloqueio); espera longa só se falhar."""
+    """Relogin na hora com perfil novo - após bloqueio (os cookies do Akamai da
+    sessão bloqueada mantêm o bloqueio) ou na troca preventiva de perfil antes de
+    estourar a cota. Espera longa só se falhar."""
     fechar_navegador(context)
     _pausa(5)
-    print("🔐 Relogin imediato após bloqueio (perfil novo)...")
+    print("🔐 Relogin imediato com perfil novo...")
     try:
         return fazer_login(p, cnpj, manter_akamai=False)
     except Exception:
