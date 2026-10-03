@@ -15,11 +15,13 @@ def _conectar_inbox():
 
 
 def _ids_emails_sms(mail):
-    """IDs (em ordem crescente) dos emails com qualquer um dos assuntos aceitos (5204809 ou 28115)."""
+    """IDs (em ordem crescente) dos emails com qualquer um dos assuntos aceitos
+    (remetentes 5204809, 28115 ou 9150000 - este último desde 02/10/2026)."""
     _, messages = mail.search(
         None,
-        'OR SUBJECT "BuscaSMSEnergisa - SMS do 5204809 (Energisa)" '
-        'SUBJECT "BuscaSMSEnergisa - SMS da Energisa (28115)"'
+        'OR OR SUBJECT "BuscaSMSEnergisa - SMS do 5204809 (Energisa)" '
+        'SUBJECT "BuscaSMSEnergisa - SMS da Energisa (28115)" '
+        'SUBJECT "BuscaSMSEnergisa - SMS da Energisa (9150000)"'
     )
     return messages[0].split() if messages[0] else []
 
