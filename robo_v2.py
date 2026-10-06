@@ -28,7 +28,9 @@ from function.navegador import (
     ESTADO, ESTATISTICAS, esperar, fechar_navegador, fazer_login_com_retry, relogar,
 )
 from config import LIMITE_UCS_POR_COOKIE
+from function import navegador
 from function.erros_navegador import TIMEOUT_ERRORS
+from function.vigia import Vigia
 from function.tarefa import processar_faturas_do_json
 from function.buscar_dados_api import buscar_faturas, criar_json_filtrado_por_status
 from database import DatabaseManager, inicializar_banco
@@ -400,6 +402,18 @@ def imprimir_resumo(inicio):
     print(f"Duração total: {(datetime.now() - inicio).total_seconds() / 60:.1f} min")
 
 
+class LogVigiado(LogDuplo):
+    """LogDuplo que avisa o vigia a cada escrita (sinal de que o robô está vivo)."""
+
+    def __init__(self, arquivo_log, vigia):
+        super().__init__(arquivo_log)
+        self.vigia = vigia
+
+    def write(self, mensagem):
+        self.vigia.tocar()
+        super().write(mensagem)
+
+
 def travar_instancia():
     """Impede duas execuções simultâneas: elas disputam o mesmo perfil do Chrome
     e uma derruba o navegador da outra no meio dos downloads.
@@ -454,9 +468,12 @@ def main():
     inicializar_banco()
     os.makedirs('logs', exist_ok=True)
     inicio = datetime.now()
-    log = LogDuplo(os.path.join('logs', inicio.strftime("v2-%d%m%Y-%H%M%S.txt")))
+    vigia = Vigia(navegador.PERFIL_DIR)
+    log = LogVigiado(os.path.join('logs', inicio.strftime("v2-%d%m%Y-%H%M%S.txt")), vigia)
     sys.stdout = log
+    vigia.iniciar()
     print(f"📝 ROBÔ V2 (Patchright + Chrome) - {inicio:%d/%m/%Y %H:%M:%S}")
+    print(f"🐕 Vigia de travamento: reinicia se o robô ficar {vigia.limite_s // 60:.0f} min sem escrever no log")
     print("=" * 80)
 
     # Código de saída: 0 só quando a execução vai até o fim. O

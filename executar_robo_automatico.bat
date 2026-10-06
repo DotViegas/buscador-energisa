@@ -28,12 +28,23 @@ if errorlevel 1 (
 echo Ambiente virtual ativado com sucesso!
 
 REM Executar o script Python
-echo Executando robo_v2.py...
 REM Robo v2 (Patchright + Chrome instalado). Para voltar ao antigo: python robo.py
+REM Codigo 5 = o vigia detectou travamento (robo sem escrever no log por 20 min)
+REM e encerrou a execucao: recomeca ate 3 vezes (as faturas feitas ficam no banco).
+set REINICIOS=0
+:rodar_robo
+echo Executando robo_v2.py...
 python robo_v2.py
 
 REM Capturar código de saída
 set EXIT_CODE=%errorlevel%
+if not "%EXIT_CODE%"=="5" goto fim_robo
+set /a REINICIOS+=1
+if %REINICIOS% GTR 3 goto fim_robo
+echo robo_v2.py travou - recomecando em 30 s ^(reinicio %REINICIOS% de 3^)...
+timeout /t 30 /nobreak >nul
+goto rodar_robo
+:fim_robo
 
 REM Demonstrativos de compensação das usinas: só baixa para o backup local
 REM (demonstrativos/AAAA-MM/); o envio ao GEUS passa pela conferência.
