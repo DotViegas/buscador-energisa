@@ -260,6 +260,38 @@ def _enviar_cnpj(page, monitor, cnpj):
     raise Exception(f"CNPJ não avançou após {MAX_ENVIOS_CNPJ} envios (/api/auth: {monitor.status_auth})")
 
 
+def _campos_do_codigo(page, espera_s=30):
+    """Os 4 campos do código SMS.
+
+    Em 04/10 e 05/10/2026 a busca por get_by_role("textbox", name="Dígito 1 do
+    código") falhou com a tela do código visível. Aqui vale qualquer campo cujo
+    rótulo seja "Dígito N" (textbox, spinbutton...) e, na falta, os 4 primeiros
+    inputs visíveis de 1 caractere. Sem nada em `espera_s`, registra os inputs
+    da tela no log (para ajustar o seletor) e falha.
+    """
+    limite = time.time() + espera_s
+    while time.time() < limite:
+        try:
+            por_rotulo = [page.get_by_label(re.compile(rf"d[ií]gito\s*{n}\b", re.IGNORECASE)).first
+                          for n in range(1, 5)]
+            if all(c.is_visible() for c in por_rotulo):
+                return por_rotulo
+            curtos = page.locator("input[maxlength='1']:visible")
+            if curtos.count() >= 4:
+                print("ℹ️ Campos do código achados pelo tamanho (sem rótulo 'Dígito N')")
+                return [curtos.nth(i) for i in range(4)]
+        except Exception:
+            pass
+        time.sleep(0.5)
+    try:
+        inputs = page.evaluate("() => Array.from(document.querySelectorAll('input'))"
+                               ".slice(0, 8).map(i => i.outerHTML.slice(0, 200))")
+        print(f"🔎 Inputs da tela do código: {inputs}")
+    except Exception:
+        pass
+    raise Exception(f"Campos do código não encontrados em {espera_s}s")
+
+
 def fazer_login(p, cnpj, manter_akamai=True):
     """Abre o Chrome, faz o login completo (CNPJ → telefone → código SMS).
 
@@ -298,10 +330,9 @@ def fazer_login(p, cnpj, manter_akamai=True):
         if not codigo or len(codigo) < 4:
             raise Exception("Não foi possível obter o código de verificação")
 
-        primeiro_digito = page.get_by_role("textbox", name="Dígito 1 do código")
-        primeiro_digito.wait_for(state="visible", timeout=10000)
-        for posicao, digito in enumerate(codigo[:4], 1):
-            campo = page.get_by_role("textbox", name=f"Dígito {posicao} do código")
+        campos = _campos_do_codigo(page)
+        primeiro_digito = campos[0]
+        for campo, digito in zip(campos, codigo[:4]):
             campo.click()
             campo.fill(digito)
             _pausa(0.4)
@@ -342,6 +373,7 @@ def fazer_login_com_retry(p, cnpj, manter_akamai_inicial=True):
     recusado, o IP está punido: espera longa e crescente entre as tentativas.
     """
     tentativa = 0
+    repeticao_rapida_usada = False
     while True:
         tentativa += 1
         manter = tentativa == 1 and manter_akamai_inicial
@@ -354,6 +386,11 @@ def fazer_login_com_retry(p, cnpj, manter_akamai_inicial=True):
                 continue
             if isinstance(e, IpPunidoError):
                 esperar(f"IP punido pelo Akamai (tentativa {tentativa})")
+            elif not repeticao_rapida_usada:
+                # Falha que não é do Akamai (tela demorou, SMS atrasou...): uma nova
+                # tentativa na hora costuma passar; a espera longa vem só depois.
+                repeticao_rapida_usada = True
+                print("↪️ Falha no login que não é do Akamai - tentando de novo na hora")
             else:
                 esperar(f"Falha no login (tentativa {tentativa})")
 
@@ -367,7 +404,15 @@ def relogar(p, cnpj, context):
     print("🔐 Relogin imediato com perfil novo...")
     try:
         return fazer_login(p, cnpj, manter_akamai=False)
+    except IpPunidoError:
+        pass
     except Exception:
-        print("⚠️ Relogin imediato falhou - entrando no ciclo de espera + nova tentativa")
-        esperar("Relogin imediato falhou")
-        return fazer_login_com_retry(p, cnpj, manter_akamai_inicial=False)
+        # Não é do Akamai (tela demorou, SMS atrasou...): mais uma vez na hora.
+        print("↪️ Relogin falhou por motivo que não é do Akamai - tentando de novo na hora")
+        try:
+            return fazer_login(p, cnpj, manter_akamai=False)
+        except Exception:
+            pass
+    print("⚠️ Relogin imediato falhou - entrando no ciclo de espera + nova tentativa")
+    esperar("Relogin imediato falhou")
+    return fazer_login_com_retry(p, cnpj, manter_akamai_inicial=False)

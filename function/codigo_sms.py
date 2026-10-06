@@ -15,14 +15,13 @@ def _conectar_inbox():
 
 
 def _ids_emails_sms(mail):
-    """IDs (em ordem crescente) dos emails com qualquer um dos assuntos aceitos
-    (remetentes 5204809, 28115 ou 9150000 - este último desde 02/10/2026)."""
-    _, messages = mail.search(
-        None,
-        'OR OR SUBJECT "BuscaSMSEnergisa - SMS do 5204809 (Energisa)" '
-        'SUBJECT "BuscaSMSEnergisa - SMS da Energisa (28115)" '
-        'SUBJECT "BuscaSMSEnergisa - SMS da Energisa (9150000)"'
-    )
+    """IDs (em ordem crescente) dos emails do app encaminhador, de qualquer remetente.
+
+    O assunto traz o número que mandou o SMS ("BuscaSMSEnergisa - SMS da Energisa
+    (28115)"), e a Energisa troca esse número com frequência (5204809, 28115,
+    9150000, 2650456 só entre set e out/2026). Por isso o filtro é só o prefixo.
+    """
+    _, messages = mail.search(None, 'SUBJECT "BuscaSMSEnergisa"')
     return messages[0].split() if messages[0] else []
 
 

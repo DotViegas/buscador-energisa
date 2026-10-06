@@ -459,6 +459,9 @@ def main():
     print(f"📝 ROBÔ V2 (Patchright + Chrome) - {inicio:%d/%m/%Y %H:%M:%S}")
     print("=" * 80)
 
+    # Código de saída: 0 só quando a execução vai até o fim. O
+    # executar_robo_automatico.bat só roda os demonstrativos depois de um 0.
+    codigo = 4
     try:
         if reprocessar_tudo:
             print("♻️ Modo RERRODADA ativado - TODAS as faturas do dia serão refeitas")
@@ -467,7 +470,8 @@ def main():
         print("📡 Buscando dados atualizados da API...")
         if not buscar_faturas():
             print("❌ Falha ao buscar dados da API. Abortando.")
-            return
+            codigo = 3
+            return codigo
 
         with sync_playwright() as p:
             for n, cnpj in enumerate(geradoras, 1):
@@ -480,13 +484,15 @@ def main():
                 if n < len(geradoras):
                     time.sleep(5)
         print(f"\n✅ Execução finalizada - {datetime.now():%d/%m/%Y %H:%M:%S}")
+        codigo = 0
     except Exception as e:
         print(f"❌ Erro durante execução: {e}")
     finally:
         imprimir_resumo(inicio)
         log.close()
         sys.stdout = log.terminal
+    return codigo
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

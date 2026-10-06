@@ -35,6 +35,17 @@ python robo_v2.py
 REM Capturar código de saída
 set EXIT_CODE=%errorlevel%
 
+REM Demonstrativos de compensação das usinas: só baixa para o backup local
+REM (demonstrativos/AAAA-MM/); o envio ao GEUS passa pela conferência.
+REM Só roda depois que o robo_v2 terminou de verdade (código 0): se ele foi
+REM interrompido, abortou ou travou, os demonstrativos não começam fora de ordem.
+if "%EXIT_CODE%"=="0" (
+    echo Executando robo_demonstrativos.py...
+    python robo_demonstrativos.py
+) else (
+    echo robo_v2.py nao terminou ^(codigo %EXIT_CODE%^) - demonstrativos NAO executados
+)
+
 REM Desativar ambiente virtual
 call deactivate
 
